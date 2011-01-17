@@ -675,6 +675,30 @@ int try_unit_term(Term &term) {
 	return 0;
 }
 
+int try_set_term(Term &term) {
+	int handle_term(Term &term);
+	// TODO: this will soon change with addition of = and <-
+	if (is_specific_special_form(term, "=")) {
+		ASSERT(term.list.size() == 3, "set special form should get 2 params");
+		std::list<Term>::iterator it = term.list.begin(); 
+		const Term &var = *++it;
+		ASSERT(var.is_single_word(), "variable name should be a single word");
+		ASSERT(FunctionManager::exists(var.single.str),
+		       "Attempt to do set on non existent variable");
+		Term &value = *++it;
+		const int value_temp_index = handle_term(value);
+		ASSERT(same_types(FunctionManager::type(var.single.str),
+		                  value.metadata.type.get_data()),
+		                  "assignment violates types");
+		printf("%s = %s;\n",
+		       var.single.str.c_str(),
+		       make_temp_name(value_temp_index).c_str());
+		term.metadata.set_type(build_base_type("unit"));
+		return temp_index++;
+	}
+	return 0;
+}
+
 int handle_term(Term &term) {
 	Maybe<Type> type;
 	int used_temp_index = 0;
@@ -688,11 +712,12 @@ int handle_term(Term &term) {
 	TRY(try_app_term)
 	TRY(try_int_term)
 	TRY(try_unit_term)
+	TRY(try_set_term)
 	ELSE
 	{
 		ABORT("Expected: special form or application form of a known callable");
 	}
-
+	ASSERT(term.metadata.type.is_valid(), "term without type???");
 	return used_temp_index;
 }
 
