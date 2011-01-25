@@ -1,7 +1,11 @@
 %option noyywrap
 %{
 #include "lexer.h"
+int yyoffset = 1;
+
+#define YY_USER_ACTION yyoffset += yyleng;
 %}
+
 
 %%
 \( return OPEN;
