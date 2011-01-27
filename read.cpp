@@ -93,6 +93,13 @@ bool is_callable_type(const Type &type) {
 	return type.name == "func";
 }
 
+class IsCallableWithNParams {
+public: IsCallableWithNParams(size_t n) : n(n) {}
+        bool operator()(const Type &t) { return is_callable_type(t) &&
+		                                        t.type_params.size() == n; }
+private: const size_t n;
+};
+
 bool same_types(const Type &t1, const Type &t2) {
 #define CASE(X,Y) case X: return t2.type == X && t1.Y == t2.Y;
 
@@ -103,6 +110,26 @@ bool same_types(const Type &t1, const Type &t2) {
 #undef CASE
 }
 
+class SameType {
+public: SameType(const Type &t) : t(t) {}
+        bool operator()(const Type &t2) { return same_types(t, t2); } 
+private: Type t;
+};
+
+
+std::string type_to_string(const Type &type) {
+	if (type.type_params.empty()) return type.name;
+	std::string str = "(";
+	str += type.name;
+	for (std::list<Type>::const_iterator it = type.type_params.begin();
+	     it != type.type_params.end(); ++it)
+	{
+		str += " ";
+		str += type_to_string(*it);
+	}
+	str += ")";
+	return str;
+}
 
 #define TOKEN_TYPE_EOF    0
 #define TOKEN_TYPE_OPEN   1
@@ -353,6 +380,65 @@ bool same_terms(const Term &t1, const Term &t2) {
 #define TYPE_TYPE_CHAR 1
 #define TYPE_TYPE_VOID 2
 
+template <class T, class FUNC>
+T filter(const T &values, const FUNC &fun) {
+	T ret;
+	typename T::const_iterator iter = values.begin();
+	for (; iter != values.end(); ++iter) {
+//		printf("filter: debug: %d\n", iter != values.end());
+		if (fun(*iter)) {
+//			printf("filter: pushing back\n");
+			ret.push_back(*iter);
+		}
+	}
+	return ret;
+}
+
+template <class T, class FUNC, class S>
+std::list<S> map(FUNC f, const T &list, S *dummy) {
+	std::list<S> ret;
+	for (typename T::const_iterator it = list.begin();
+	     it != list.end(); ++it)
+	{
+		ret.push_back(func(*it));
+	}
+}
+
+template <class T, class FUNC>
+void set_map(FUNC f, T &t)
+{
+	std::transform(t.begin(), t.end(), t.begin(), t.end(), f);
+}
+
+template <class A, class B, class C, class F>
+void set_filter_with_assoc2(const F &pred,A &list1, B &list2, C &list3) {
+	ASSERT(list1.size() == list2.size() &&
+	       list2.size() == list3.size(),
+	       "set_filter_with_assoc2: lists should have same size");
+	typename A::iterator a = list1.begin();
+	typename B::iterator b = list2.begin();
+	typename C::iterator c = list3.begin();
+	for ( ; a != list1.end(); ++a, ++b, ++c) {
+		if (pred(*a)) {
+			list1.erase(a); list2.erase(b); list3.erase(c);
+		}
+	}
+}
+
+template <class T> void incr(T &t) { ++t; }
+
+template <class A, class B, class FUNC>
+A foldl(const FUNC &func, A acc, const B &list) {
+	typename B::const_iterator it;
+	for (it = list.begin(); it != list.end(); ++it) {
+		acc = func(acc, *it);
+	}
+	return acc;
+}
+
+template <class A, class B>
+const A &pair_first(const std::pair<A,B> &pair) { return pair.first; }
+
 
 class FunctionManager {
 private:
@@ -360,17 +446,17 @@ private:
 	typedef std::map<std::string, std::list<FunctionData> > map_t;
 public:
 	static bool exists(const std::string &str)
-	{return map.find(str) != map.end();}
-
-
+	{
+		return get(str) != NULL;
+	}
 	
 	static const Type &type(const std::string &name) {
 		ASSERT(exists(name), "FunctionManager::type: unknown name");
-		return map[name].back().t;
+		return get(name)->t;
 	}
 	static const std::string &true_name(const std::string &name) {
 		ASSERT(exists(name), "FunctionManager::true_name: unknown name");
-		return map[name].back().true_name;
+		return get(name)->true_name;
 	}
 	static void add(const std::string &name, const Type &newtype)
 	{
@@ -410,6 +496,10 @@ public:
 	}
 	static int cur_scope_depth() { return scope.size() - 1; }
 private:
+	static FunctionData *get(const std::string &name) {
+		map_t::iterator it = map.find(name);
+		return it == map.end() ? NULL : &map.find(name)->second.back();
+	}
 	static map_t map;
 	static std::list< std::list<map_t::iterator> > scope;
 };
@@ -424,6 +514,7 @@ public:
 		base_types.insert("char");
 		base_types.insert("bool");
 		base_types.insert("unit");
+		base_types.insert("double");
 		poly_types.insert(std::make_pair("func", -1));
 	}
 	static bool is_base_type(const std::string &str) {
@@ -465,21 +556,6 @@ bool is_not_list(const Term &term) {
 	return term.type != TERM_TYPE_LIST;
 }
 
-
-
-template <class T, class FUNC>
-T filter(const T &values, const FUNC &fun) {
-	T ret;
-	typename T::const_iterator iter = values.begin();
-	for (; iter != values.end(); ++iter) {
-//		printf("filter: debug: %d\n", iter != values.end());
-		if (fun(*iter)) {
-//			printf("filter: pushing back\n");
-			ret.push_back(*iter);
-		}
-	}
-	return ret;
-}
 
 
 
@@ -549,19 +625,6 @@ std::string word_from_term(const Term &term) {
 	return term.single.str;
 }
 
-std::string type_to_string(const Type &type) {
-	if (type.type_params.empty()) return type.name;
-	std::string str = "(";
-	str += type.name;
-	for (std::list<Type>::const_iterator it = type.type_params.begin();
-	     it != type.type_params.end(); ++it)
-	{
-		str += " ";
-		str += type_to_string(*it);
-	}
-	str += ")";
-	return str;
-}
 
 
 
@@ -900,7 +963,7 @@ void print_footer_stuff() {
 void add_primitives() {
 	std::list<Type> iib;
 	iib.push_back(build_base_type("int")); iib.push_back(build_base_type("int"));
-	iib.push_back(build_base_type("bool")); iib.push_back(build_base_type("double"));
+	iib.push_back(build_base_type("bool"));
 	FunctionManager::add_with_true_name("<", build_poly_type("func", iib),
 	                                    HIDDEN_CHEME_LE);
 }
