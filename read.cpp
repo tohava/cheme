@@ -1,21 +1,86 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
+#include <stdarg.h>
+ 
 #include <list>
 #include <string>
 #include <map>
 #include <set>
 #include <algorithm>
 #include <list>
+#include <stack>
+#include <memory>
 
 #include "lexer.h"
 
-#define HIDDEN_CHEME_LE "hidden_cheme_less_than"
-#define HIDDEN_CHEME_GE "hidden_cheme_greater_than"
+#define HIDDEN_CHEME_LT "hidden_cheme_less_than"
+#define HIDDEN_CHEME_GT "hidden_cheme_greater_than"
 #define HIDDEN_CHEME_EQ "hidden_cheme_equals"
 #define HIDDEN_CHEME_INT_TO_DOUBLE "hidden_cheme_int_to_double"
 #define HIDDEN_CHEME_DOUBLE_TO_INT "hidden_cheme_double_to_int"
+#define HIDDEN_CHEME_ADD_INTS "hidden_cheme_add_ints"
+#define HIDDEN_CHEME_SUB_INTS "hidden_cheme_sub_ints"
+#define HIDDEN_CHEME_CMP_INTS "hidden_cheme_cmp_ints"
+
+typedef struct {
+	char *buf_origin;
+	char *buf_ptr;
+	size_t buf_size;
+} cheme_printf_context;
+std::stack<cheme_printf_context> cheme_printf_stack;
+int cheme_printf(const char *format, ...) {
+	va_list argp; 
+	if (cheme_printf_stack.empty()) {
+		va_start(argp, format);
+		int ret = vprintf(format, argp);
+		va_end(argp);
+		return ret;
+	} else {
+		cheme_printf_context &cur = cheme_printf_stack.top();
+		if (cur.buf_origin == NULL) {
+			cur.buf_ptr = cur.buf_origin = (char*)malloc(4096);
+			cur.buf_size = 4096;
+		}
+		size_t written;
+		while (1) {
+			const size_t max_write =
+			    (cur.buf_size - (cur.buf_ptr - cur.buf_origin));
+			va_start(argp, format);
+			written = vsnprintf(cur.buf_ptr, max_write, format, argp);
+			va_end(argp);
+			if (written == max_write) {
+				ptrdiff_t buf_offset = cur.buf_ptr - cur.buf_origin;
+				cur.buf_origin = (char*)realloc(cur.buf_origin,
+				                                cur.buf_size * 2);
+				cur.buf_ptr = (cur.buf_origin + buf_offset);
+				cur.buf_size *= 2;
+			} else break;
+		}
+		cur.buf_ptr += written;
+		va_end(argp);
+		return written;
+	}
+}
+
+void cheme_printf_push() {
+	cheme_printf_stack.push(cheme_printf_context());
+	cheme_printf_context &cur = cheme_printf_stack.top();
+	cur.buf_origin = cur.buf_ptr = NULL;
+	cur.buf_size = 0;
+}
+
+char *cheme_printf_pop() {
+	if (!cheme_printf_stack.empty()) {
+		cheme_printf_context cur = cheme_printf_stack.top();
+		cheme_printf_stack.pop();
+		return cur.buf_origin;
+	} else
+		return NULL;
+}
+
+#define printf DO NOT USE
+
 
 struct ErrorContext {
 	long pos;
@@ -149,13 +214,15 @@ struct Token {
 };
 
 struct TermMetaData {
-	Maybe<Type> type;
 	void set_type(const Type &typ) { type = Maybe<Type>(typ); }
 	const Type &get_type() {
 		ASSERT(type.is_valid(),
 		       "TermMetaData::get_type - there is no type");
 		return type.get_data();
 	}
+	bool has_type() { return type.is_valid(); }
+private:
+	Maybe<Type> type;
 };
 
 #define TERM_TYPE_LIST 0
@@ -427,13 +494,16 @@ void set_filter_with_assoc2(const F &pred,A &list1, B &list2, C &list3) {
 
 template <class T> void incr(T &t) { ++t; }
 
+
+template <class A, class B, class FUNC>
+A foldl(const FUNC &func, A acc, const B begin, const B end) {	
+	for (B it = begin; it != end; ++it) { acc = func(acc, *it); }
+	return acc;
+}
+
 template <class A, class B, class FUNC>
 A foldl(const FUNC &func, A acc, const B &list) {
-	typename B::const_iterator it;
-	for (it = list.begin(); it != list.end(); ++it) {
-		acc = func(acc, *it);
-	}
-	return acc;
+	foldl(func, acc, list.begin(), list.end());
 }
 
 template <class A, class B>
@@ -593,6 +663,9 @@ Type type_from_term(const Term &term) {
 }
 
 int handle_term(Term &term);
+int handle_term_for_fold(int ignored, Term &term) {
+	return handle_term(term);
+}
 
 
 Type try_var_term_var_list_elem_type(const std::list<Term> &list) {
@@ -673,7 +746,7 @@ begin:
 		int init_value_temp_index = try_var_term_var_list_elem_init(term.list);
 		std::string translation = try_var_term_var_list_elem_translate
 		    (type, name, is_decl, init_value_temp_index);
-		printf("%s;\n",translation.c_str());
+		cheme_printf("%s;\n",translation.c_str());
 		       
 //		printf("Var %s Type %s\n", name.c_str(), type_to_string(type).c_str());
 		FunctionManager::add(name, type);
@@ -794,9 +867,8 @@ begin:
 	int at_end = ((itType == itTypeEnd) ? 1 : 0) + ((itTerm == itTermEnd) ? 1 : 0);
 	ASSERT(at_end % 2 == 0, "try_app_term_params: arity mismatch");
 	if (!at_end) {
-		if (!itTerm->metadata.type.is_valid())
-			ret.push_back(handle_term(*itTerm));
-		ASSERT(same_types(itTerm->metadata.type.get_data(), *itType),
+		ret.push_back(handle_term(*itTerm));
+		ASSERT(same_types(itTerm->metadata.get_type(), *itType),
 		       "Expected type of application argument does not match inferred");
 		++itType; ++itTerm;
 		goto begin;
@@ -817,14 +889,20 @@ int try_app_term(Term &term) {
 	const std::list<int> temp_indices = try_app_term_params(itType, itTypeRet,
 	                                                        itTerm, itTermEnd);
 //	printf("Application of %s\n", str.c_str());
-	printf("%s(", FunctionManager::true_name(str).c_str());
+
+	int result_index = temp_index++;
+#define TVTVLET try_var_term_var_list_elem_translate
+	cheme_printf("%s = %s(",
+	       TVTVLET(*itTypeRet, make_temp_name(result_index).c_str(),
+	               false, 0).c_str(), FunctionManager::true_name(str).c_str());
+#undef TVTVLET
 	std::list<int>::const_iterator it = temp_indices.begin();
 	for (; it != temp_indices.end(); ++it)
-		printf("%s%s", it == temp_indices.begin() ? "" : ",",
-		       make_temp_name(*it).c_str());
-	printf(");\n");
+		cheme_printf("%s%s", it == temp_indices.begin() ? "" : ",",
+		             make_temp_name(*it).c_str());
+	cheme_printf(");\n");
 	term.metadata.set_type(*itTypeRet);
-	return true;
+	return result_index;
 }
 
 int try_int_term(Term &term) {
@@ -834,20 +912,28 @@ int try_int_term(Term &term) {
 	{
 		const Type int_type = build_base_type("int");
 		term.metadata.set_type(int_type);
-		printf("%s = %d;\n",
-		       try_var_term_var_list_elem_translate
-		       (int_type, get_next_temp(), false, 0).c_str(),
-		       term.single.num);
+		cheme_printf("%s = %d;\n",
+		             try_var_term_var_list_elem_translate
+		             (int_type, get_next_temp(), false, 0).c_str(),
+		             term.single.num);
 		return temp_index - 1;
 	}
 	else
 		return 0;
 }
 
+int try_unit_term_unitv_var() {
+#define TVTVLAW try_var_term_var_list_elem_translate
+	cheme_printf("%s;\n", TVTVLAW(build_base_type("unit"), get_next_temp(),
+	                              false, 0).c_str());
+	return temp_index - 1;
+#undef TVTVLAW
+}
+
 int try_unit_term(Term &term) {
 	if (term.is_single_specific_word("unitv")) {
 		term.metadata.set_type(build_base_type("unit"));
-		return temp_index++;
+		return try_unit_term_unitv_var();
 	}
 	return 0;
 }
@@ -864,13 +950,49 @@ int try_set_term(Term &term) {
 		Term &value = *++it;
 		const int value_temp_index = handle_term(value);
 		ASSERT(same_types(FunctionManager::type(var.single.str),
-		                  value.metadata.type.get_data()),
+		                  value.metadata.get_type()),
 		                  "assignment violates types");
-		printf("%s = %s;\n",
-		       var.single.str.c_str(),
-		       make_temp_name(value_temp_index).c_str());
+		cheme_printf("%s = %s;\n",
+		             var.single.str.c_str(),
+		             make_temp_name(value_temp_index).c_str());
 		term.metadata.set_type(build_base_type("unit"));
-		return temp_index++;
+		return try_unit_term_unitv_var();
+	}
+	return 0;
+}
+
+int try_and_term(Term &term) {
+	if (is_specific_special_form(term, "and")) {
+		ASSERT(term.list.size() > 2, "and"
+		       " special form should get at least 2 params");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		const int false_label_index = temp_index++;
+//		const int true_label_index = temp_index++;
+		const int finish_label_index = temp_index++;
+		while (it != term.list.end()) {
+			Term &term = *it++;
+			const int value_temp_index = handle_term(term);
+			ASSERT(same_types(term.metadata.get_type(),
+			                  build_base_type("bool")),
+			                  "operands to and should be booleans");
+			cheme_printf("if (!(%s)) goto %s;\n",
+			             make_temp_name(value_temp_index).c_str(),
+			             make_temp_name(false_label_index).c_str());
+		}
+		const std::string result_var = get_next_temp();
+#define TVTVLET try_var_term_var_list_elem_translate
+		cheme_printf("%s;\n",
+		             TVTVLET(build_base_type("bool"), result_var, false,
+		                     0).c_str());
+#undef TVTVLET											
+		cheme_printf("%s = true;\ngoto %s;\n",result_var.c_str(),
+		             make_temp_name(finish_label_index).c_str());
+		cheme_printf("%s: %s = false;\n",
+		             make_temp_name(false_label_index).c_str(),
+		             result_var.c_str());
+		cheme_printf("%s:;\n", make_temp_name(finish_label_index).c_str());
+		term.metadata.set_type(build_base_type("bool"));
+		return temp_index - 1;
 	}
 	return 0;
 }
@@ -878,24 +1000,28 @@ int try_set_term(Term &term) {
 int try_var_ref_term(Term &term) {
 	if (term.is_single_word())
 	{
-		printf("%s = %s;\n", get_next_temp().c_str(),
-		       FunctionManager::true_name(term.single.str).c_str());
-		term.metadata.set_type(FunctionManager::type(term.single.str));
+		const Type &type = FunctionManager::type(term.single.str);
+		std::string next_temp = get_next_temp();
+		cheme_printf("%s = %s;\n",
+		             try_var_term_var_list_elem_translate(type, next_temp,
+		                                                  false, 0).c_str(),
+		             FunctionManager::true_name(term.single.str).c_str());
+		term.metadata.set_type(type);
 		return temp_index - 1;
 	}
 	return 0;
 }
 
 void try_while_term_translate_header() {
-	printf("while (1) {\n");
+	cheme_printf("while (1) {\n");
 }
 
 void try_while_term_translate_cond(int cond_temp_index) {
-	printf("if (%s) break;\n", make_temp_name(cond_temp_index).c_str());
+	cheme_printf("if (!(%s)) break;\n", make_temp_name(cond_temp_index).c_str());
 }
 
 void try_while_term_translate_footer() {
-	printf("}\n");
+	cheme_printf("}\n");
 }
 
 int try_while_term(Term &term) {
@@ -906,18 +1032,99 @@ int try_while_term(Term &term) {
 		try_while_term_translate_header();
 		FunctionManager::start_scope();
 		const int cond_temp_index = handle_term(*it1);
-		ASSERT(same_types(it1->metadata.type.get_data(),
+		ASSERT(same_types(it1->metadata.get_type(),
 		                  build_base_type("bool")),
 		       "While condition should be a boolean");
 		try_while_term_translate_cond(cond_temp_index);
-		printf("{\n"); FunctionManager::start_scope();
+		cheme_printf("{\n"); FunctionManager::start_scope();
 		std::for_each(it2, term.list.end(), handle_term);
-		printf("}\n"); FunctionManager::end_scope();
+		cheme_printf("}\n"); FunctionManager::end_scope();
 		FunctionManager::end_scope();
 		try_while_term_translate_footer();
 		term.metadata.set_type(build_base_type("unit"));
-		return temp_index++;
+		return try_unit_term_unitv_var();
 	} 
+	return 0;
+}
+
+int try_if_term(Term &term) {
+	if (is_specific_special_form(term, "if")) {
+		ASSERT(term.list.size() == 3 || term.list.size() == 4,
+		       "bad number of if parameters, should be either "
+		       "(if cond true_exp) or (if cond true_exp false_exp)");
+		std::list<Term>::iterator it = term.list.begin();
+		Term *cond = &*++it;
+		Term *true_exp = &*++it;
+		++it;
+		Term *false_exp = it == term.list.end() ? NULL : &*it;
+		const int cond_temp_index = handle_term(*cond);
+		ASSERT(same_types(cond->metadata.get_type(),
+		                  build_base_type("bool")),
+		       "if condition should be a boolean");
+		const std::string result_var = get_next_temp();
+		const int result_index = temp_index - 1;
+		cheme_printf_push();
+		{
+			cheme_printf("if (%s) {\n",
+			             make_temp_name(cond_temp_index).c_str());
+			const int true_index = handle_term(*true_exp);
+			cheme_printf("%s = %s;\n", result_var.c_str(),
+			             make_temp_name(true_index).c_str());
+			cheme_printf("}");
+			if (false_exp != NULL) {
+				cheme_printf(" else {\n");
+				const int false_index = handle_term(*false_exp);
+				ASSERT(same_types(false_exp->metadata.get_type(),
+				                  true_exp->metadata.get_type()),
+				       "if true expression and false expression must "
+				       "have same types");
+				cheme_printf("%s = %s;\n", result_var.c_str(),
+				             make_temp_name(false_index).c_str());
+				cheme_printf("}\n");
+			} else {
+				ASSERT(same_types(build_base_type("unit"),
+				                  true_exp->metadata.get_type()),
+				       "if true expression must have unit type");
+			}
+		}
+		std::auto_ptr<char> p(cheme_printf_pop());
+#define TVTVLET try_var_term_var_list_elem_translate
+		cheme_printf("%s;\n", TVTVLET(true_exp->metadata.get_type(),
+		                              result_var, false, 0).c_str());
+#undef TVTVLET
+		cheme_printf("%s", p.get());
+		term.metadata.set_type(true_exp->metadata.get_type());
+		return result_index;
+	}
+	return 0;
+}
+
+int try_begin_term(Term &term) {
+	if (is_specific_special_form(term, "begin")) {
+		ASSERT(term.list.size() > 2,
+		       "begin should wrap more than one expression");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		cheme_printf_push();
+		FunctionManager::start_scope();
+		const int result_index = temp_index++;
+		cheme_printf("{\n");
+		const int final_value_index = foldl(handle_term_for_fold, 0, it,
+		                                    term.list.end());
+		cheme_printf("%s = %s;\n",make_temp_name(result_index).c_str(),
+		             make_temp_name(final_value_index).c_str());
+		cheme_printf("}\n");
+		FunctionManager::end_scope();
+		std::auto_ptr<char> p(cheme_printf_pop());
+		it = term.list.end(); --it;
+#define TVTVLET try_var_term_var_list_elem_translate
+		cheme_printf("\n%s;\n", TVTVLET(it->metadata.get_type(),
+		                            make_temp_name(result_index),
+		                            false, 0).c_str());
+#undef TVTVLET
+		cheme_printf("%s", p.get());
+		term.metadata.set_type(it->metadata.get_type());
+		return result_index;
+	}
 	return 0;
 }
 
@@ -934,6 +1141,9 @@ int handle_term(Term &term) {
 	TRY(try_decl_term)
 	TRY(try_while_term)
 	TRY(try_set_term)
+	TRY(try_and_term)
+	TRY(try_if_term)
+	TRY(try_begin_term)
 	TRY(try_int_term)
 	TRY(try_unit_term)
 	TRY(try_app_term)
@@ -942,30 +1152,67 @@ int handle_term(Term &term) {
 	{
 		ABORT("Expected: special form or application form of a known callable");
 	}
+	ASSERT(term.metadata.has_type(), "term without type???");
 	pop_error_context();
-	ASSERT(term.metadata.type.is_valid(), "term without type???");
 	return used_temp_index;
 }
 
 void print_header_stuff() {
-	printf("typedef struct {} unit;\n"
-	       "static unit unitv() { unit v; return v; }\n");
-	printf("static int "HIDDEN_CHEME_LE"(int x, int y) { return x < y; }\n");
-	printf("static int "HIDDEN_CHEME_GE"(int x, int y) { return x > y; }\n");
-	printf("static int "HIDDEN_CHEME_EQ"(int x, int y) { return x == y; }\n");
-	printf("int main() {");
+	cheme_printf("typedef struct {} unit;\n"
+	             "static unit unitv() { unit v; return v; }\n");
+	cheme_printf("static int "HIDDEN_CHEME_LT"(int x, int y) "
+	             "{ return x < y; }\n");
+	cheme_printf("static int "HIDDEN_CHEME_GT"(int x, int y) "
+	             "{ return x > y; }\n");
+	cheme_printf("static int "HIDDEN_CHEME_EQ"(int x, int y) "
+	             "{ return x == y; }\n");
+	cheme_printf("static int mod(int x, int y) { return x %% y; }\n");
+	cheme_printf("static int div(int x, int y) { return x / y; }\n");
+	cheme_printf("static int "HIDDEN_CHEME_ADD_INTS"(int x, int y) "
+	             "{ return x + y; }\n");
+	cheme_printf("static int "HIDDEN_CHEME_SUB_INTS"(int x, int y) "
+	             "{ return x - y; }\n");
+	cheme_printf("static int "HIDDEN_CHEME_CMP_INTS"(int x, int y) "
+	             "{ return x == y; }\n");
+	cheme_printf("static double int2double(int x) { return (double)x; }\n");
+	cheme_printf("static int double2int(double x) { return (int)x; }\n");
+	cheme_printf("typedef enum { false = 0, true = 1} bool;\n"); 
+	cheme_printf("int main() {");
 }
 
 void print_footer_stuff() {
-	printf("}");
+	cheme_printf("}");
 }
 
 void add_primitives() {
 	std::list<Type> iib;
-	iib.push_back(build_base_type("int")); iib.push_back(build_base_type("int"));
+	iib.push_back(build_base_type("int"));
+	iib.push_back(build_base_type("int"));
 	iib.push_back(build_base_type("bool"));
+	FunctionManager::add_with_true_name("==", build_poly_type("func", iib),
+	                                    HIDDEN_CHEME_CMP_INTS);
 	FunctionManager::add_with_true_name("<", build_poly_type("func", iib),
-	                                    HIDDEN_CHEME_LE);
+	                                    HIDDEN_CHEME_LT);
+	FunctionManager::add_with_true_name(">", build_poly_type("func", iib),
+	                                    HIDDEN_CHEME_GT);
+	std::list<Type> iii;
+	iii.push_back(build_base_type("int"));
+	iii.push_back(build_base_type("int"));
+	iii.push_back(build_base_type("int"));
+	FunctionManager::add("mod", build_poly_type("func", iii));
+	FunctionManager::add("div", build_poly_type("func", iii));
+	FunctionManager::add_with_true_name("+", build_poly_type("func", iii),
+	                                    HIDDEN_CHEME_ADD_INTS);
+	FunctionManager::add_with_true_name("-", build_poly_type("func", iii),
+	                                    HIDDEN_CHEME_SUB_INTS);
+	std::list<Type> id;
+	id.push_back(build_base_type("int"));
+	id.push_back(build_base_type("double"));
+	FunctionManager::add("int2double", build_poly_type("func", id));
+	std::list<Type> di;
+	di.push_back(build_base_type("double"));
+	di.push_back(build_base_type("int"));
+	FunctionManager::add("double2int", build_poly_type("func", di));
 }
 
 int main() {
@@ -980,4 +1227,5 @@ int main() {
 	std::for_each(all_terms.begin(), all_terms.end(), handle_term);
 	FunctionManager::end_scope();
 	print_footer_stuff();
+	ASSERT(cheme_printf_stack.empty(), "cheme_printf_stack NOT empty");
 }
