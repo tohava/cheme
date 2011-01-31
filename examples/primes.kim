@@ -1,15 +1,21 @@
 (decl ((func int int) putchar))
 (decl ((func double double) sqrt))
 
+(putchar 112) 
+(putchar 114) 
+(putchar 105) 
+(putchar 109) 
+(putchar 101) 
+(putchar 115)
 
 (var
- ((fun int unit) putint (lambda (z)
-						  (if (== z 0)
-							  (putchar 48)
-							  (while (> z 0)
-									 (begin
-									   (putchar (+ (mod z 10) 48))
-									   (= z (div z 10)))))))
+ ((func int unit) putint (lambda (z)
+						   (if (== z 0)
+							   (putchar 48)
+							   (while (> z 0)
+									  (begin
+										(putchar (+ (mod z 10) 48))
+										(= z (div z 10)))))))
  
  (int x 1))
 (while (< x 1000)

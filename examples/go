@@ -2,5 +2,5 @@
 
 for OLGA in *.kim; do 
 	echo Compiling $OLGA...
-	../cheme < $OLGA > $OLGA.c  ; gcc $OLGA.c -o $OLGA.bin ; 
+	../cheme < $OLGA > $OLGA.c  ; gcc $OLGA.c -g -o $OLGA.bin -lm; 
 done
