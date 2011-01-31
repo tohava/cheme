@@ -29,6 +29,34 @@ typedef struct {
 	size_t buf_size;
 } cheme_printf_context;
 std::stack<cheme_printf_context> cheme_printf_stack;
+
+int cheme_vprintf_to_context(cheme_printf_context &cur, const char *format,
+                             va_list argp)
+{
+	if (cur.buf_origin == NULL) {
+		cur.buf_ptr = cur.buf_origin = (char*)malloc(4096);
+		cur.buf_size = 4096;
+	}
+	size_t written;
+	while (1) {
+		const size_t max_write =
+		    (cur.buf_size - (cur.buf_ptr - cur.buf_origin));
+		va_list old_argp; va_copy(old_argp, argp);
+		written = vsnprintf(cur.buf_ptr, max_write, format, argp);
+		va_copy(argp, old_argp);
+		if (written == max_write) {
+			ptrdiff_t buf_offset = cur.buf_ptr - cur.buf_origin;
+			cur.buf_origin = (char*)realloc(cur.buf_origin,
+			                                cur.buf_size * 2);
+			cur.buf_ptr = (cur.buf_origin + buf_offset);
+			cur.buf_size *= 2;
+		} else break;
+	}
+	cur.buf_ptr += written;
+	va_end(argp);
+	return written;
+}
+
 int cheme_printf(const char *format, ...) {
 	va_list argp; 
 	if (cheme_printf_stack.empty()) {
@@ -38,26 +66,8 @@ int cheme_printf(const char *format, ...) {
 		return ret;
 	} else {
 		cheme_printf_context &cur = cheme_printf_stack.top();
-		if (cur.buf_origin == NULL) {
-			cur.buf_ptr = cur.buf_origin = (char*)malloc(4096);
-			cur.buf_size = 4096;
-		}
-		size_t written;
-		while (1) {
-			const size_t max_write =
-			    (cur.buf_size - (cur.buf_ptr - cur.buf_origin));
-			va_start(argp, format);
-			written = vsnprintf(cur.buf_ptr, max_write, format, argp);
-			va_end(argp);
-			if (written == max_write) {
-				ptrdiff_t buf_offset = cur.buf_ptr - cur.buf_origin;
-				cur.buf_origin = (char*)realloc(cur.buf_origin,
-				                                cur.buf_size * 2);
-				cur.buf_ptr = (cur.buf_origin + buf_offset);
-				cur.buf_size *= 2;
-			} else break;
-		}
-		cur.buf_ptr += written;
+		va_start(argp, format);
+		int written = cheme_vprintf_to_context(cur, format, argp);
 		va_end(argp);
 		return written;
 	}
