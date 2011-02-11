@@ -1,0 +1,39 @@
+(decl ((func int int) putchar))
+(decl ((func double double) sqrt))
+
+(putchar 112) 
+(putchar 114) 
+(putchar 105) 
+(putchar 109) 
+(putchar 101) 
+(putchar 115)
+
+(var
+ ((func int unit) putint 
+  (lambda ((int z))
+	(if (== z 0)
+		(begin (putchar 48) unitv)
+		(begin
+		  (var ((func int unit) worker 
+				(lambda ((int x))
+				  (if (== x 0)
+					  unitv
+					  (begin
+						(var (int z (mod x 10)))
+						(worker (div x 10))
+						(putchar (+ 48 z)) unitv)))))
+		  (worker z)))))
+ 
+ 
+ (int x 1))
+
+(while (< x 1000)
+	   (var ((func int bool) is_prime 
+			 (lambda ((int x))
+			   (var (int y (double2int (sqrt (int2double x)))))
+			   (while (and (> y 1) (> (mod x y) 0))
+					  (= y (- y 1)))
+			   (== y 1))))
+	   (if (is_prime x) 
+		   (begin (putint x) (putchar 10) unitv))
+	   (= x (+ x 1)))

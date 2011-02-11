@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <list>
 #include <stack>
+#include <queue>
 #include <memory>
 
 #include "lexer.h"
@@ -64,8 +66,11 @@ std::string get_next_temp() {
 int num;
 char word[1000];
 
+
+void cheme_printf_empty_stacks_to_stderr();
+
 #define ABORT(x) ASSERT(false,x)
-#define ASSERT(x,y) ((x) || (fputs((y),stderr), fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
+#define ASSERT(x,y) ((x) || (fputs((y),stderr), fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), cheme_printf_empty_stacks_to_stderr(), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
 
 typedef struct {
 	char *buf_origin;
@@ -73,20 +78,51 @@ typedef struct {
 	size_t buf_size;
 } cheme_printf_context;
 
-#define PRINTF_STACK_MAIN 0
-#define PRINTF_STACK_PRE_MAIN 1
-#define PRINTF_STACK_COUNT 2
-std::stack<cheme_printf_context> cheme_printf_stacks[2];
-std::stack< std::stack<cheme_printf_context> * > cheme_printf_stack_stack;
+#define PRINTF_ZONE_CURRENT_BODY 0
+#define PRINTF_ZONE_TOP 1
+std::stack<cheme_printf_context> cheme_printf_top_zone_stack;
+std::stack< std::stack<cheme_printf_context> > cheme_printf_body_zones_stack;
+std::queue< char* > cheme_printf_done_body_zones;
+std::stack<int> cheme_printf_zone_stack;
 
-void cheme_printf_set_stack(int stack) {
-	cheme_printf_stack_stack.push(cheme_printf_stacks + stack);
+void cheme_printf_push_body() {
+	cheme_printf_body_zones_stack.push(std::stack<cheme_printf_context>());
+	cheme_printf_body_zones_stack.top().push(cheme_printf_context());
 }
 
-void cheme_printf_unset_stack() {
-	ASSERT(!cheme_printf_stack_stack.empty(),
-	       "cheme_printf_unset_stack: no cheme_printf_set_stack to undo");
-	cheme_printf_stack_stack.pop();
+void cheme_printf_pop_body() {
+	ASSERT(!cheme_printf_body_zones_stack.empty(),
+	       "cheme_printf_pop_body: No body zone to pop");
+	ASSERT(cheme_printf_body_zones_stack.top().size() == 1,
+	       "cheme_printf_pop_body: popped body stack must be of size 1");
+	cheme_printf_done_body_zones.push
+	    (cheme_printf_body_zones_stack.top().top().buf_origin);
+	cheme_printf_body_zones_stack.pop();
+}
+
+void cheme_printf_set_zone(int zone) {
+	cheme_printf_zone_stack.push(zone);
+}
+
+void cheme_printf_unset_zone() {
+	ASSERT(!cheme_printf_zone_stack.empty(),
+	       "cheme_printf_unset_zone: no cheme_printf_set_zone to undo");
+	cheme_printf_zone_stack.pop();
+}
+
+std::stack<cheme_printf_context> *cheme_printf_get_current_stack() {
+	ASSERT(!cheme_printf_zone_stack.empty(),
+	       "cheme_printf_get_current_stack: zone stack is empty");
+	switch (cheme_printf_zone_stack.top()) {
+	case PRINTF_ZONE_TOP:
+		return &cheme_printf_top_zone_stack;
+	case PRINTF_ZONE_CURRENT_BODY:
+		ASSERT(!cheme_printf_body_zones_stack.empty(),
+		       "cheme_printf_get_current_stack: there is no top body zone");
+		return &cheme_printf_body_zones_stack.top();
+	default:
+		ABORT("cheme_printf_get_current_stack: got unknown zone code");
+	}
 }
 
 int cheme_vprintf_to_context(cheme_printf_context &cur, const char *format,
@@ -118,11 +154,9 @@ int cheme_vprintf_to_context(cheme_printf_context &cur, const char *format,
 
 int cheme_printf(const char *format, ...) {
 	va_list argp;
-	ASSERT(!cheme_printf_stack_stack.empty(),
-	       "cheme_printf: empty stack stack");
-	ASSERT(!cheme_printf_stack_stack.top()->empty(),
-	       "cheme_printf: empty stack");
-	cheme_printf_context &cur = cheme_printf_stack_stack.top()->top();
+	std::stack<cheme_printf_context> *p = cheme_printf_get_current_stack();
+	ASSERT(!p->empty(), "cheme_printf: empty stack");
+	cheme_printf_context &cur = p->top();
 	va_start(argp, format);
 	int written = cheme_vprintf_to_context(cur, format, argp);
 	va_end(argp);
@@ -130,22 +164,42 @@ int cheme_printf(const char *format, ...) {
 }
 
 void cheme_printf_push() {
-	ASSERT(!cheme_printf_stack_stack.empty(),
-	       "cheme_printf: empty stack stack");
-	cheme_printf_stack_stack.top()->push(cheme_printf_context());
-	cheme_printf_context &cur = cheme_printf_stack_stack.top()->top();
+	std::stack<cheme_printf_context> *p = cheme_printf_get_current_stack();
+	p->push(cheme_printf_context());
+	cheme_printf_context &cur = p->top();
 	cur.buf_origin = cur.buf_ptr = NULL;
 	cur.buf_size = 0;
 }
 
+bool cheme_printf_is_stack_empty() {
+	return cheme_printf_get_current_stack()->empty();
+}
+
 char *cheme_printf_pop() {
-	ASSERT(!cheme_printf_stack_stack.empty(),
-	       "cheme_printf: empty stack stack");
-	ASSERT(!cheme_printf_stack_stack.top()->empty(),
-	       "cheme_printf: empty stack");
-	cheme_printf_context cur = cheme_printf_stack_stack.top()->top();
-	cheme_printf_stack_stack.top()->pop();
+
+	ASSERT(!cheme_printf_get_current_stack()->empty(),
+	       "cheme_printf_pop: cannot pop from an empty stack");
+	cheme_printf_context cur = cheme_printf_get_current_stack()->top();
+	cheme_printf_get_current_stack()->pop();
 	return cur.buf_origin;
+}
+
+
+void cheme_printf_empty_stacks_to_stderr() {
+	fprintf(stderr, "Emptying stacks:\n");
+	cheme_printf_set_zone(PRINTF_ZONE_TOP);
+	fprintf(stderr, "PRE_MAIN stack:\n");
+	while (!cheme_printf_is_stack_empty()) {
+		fprintf(stderr, "---Element---\n%s\n", cheme_printf_pop());
+	}
+	cheme_printf_unset_zone();
+
+	cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
+	fprintf(stderr, "MAIN stack:\n");
+	while (!cheme_printf_is_stack_empty()) {
+		fprintf(stderr, "---Element---\n%s\n", cheme_printf_pop());
+	}
+	cheme_printf_unset_zone();
 }
 
 #define printf DO NOT USE
@@ -472,6 +526,12 @@ bool same_term_lists(const std::list<Term> &t1,
 	    std::equal(t1.begin(), t1.end(), t2.begin(), same_terms);
 }
 
+bool same_type_lists(const std::list<Type> &t1,
+                     const std::list<Type> &t2) {
+	return t1.size() == t2.size() &&
+	    std::equal(t1.begin(), t1.end(), t2.begin(), same_types);
+}
+
 bool same_terms(const Term &t1, const Term &t2) {
 #define CASE1(X,Y)   case X: return t2.type == X && t1.Y == t2.Y;
 #define CASE2(X,Y,F) case X: return t2.type == X && F(t1.Y,t2.Y);
@@ -510,8 +570,9 @@ std::list<S> map(FUNC f, const T &list, S *dummy) {
 	for (typename T::const_iterator it = list.begin();
 	     it != list.end(); ++it)
 	{
-		ret.push_back(func(*it));
+		ret.push_back(f(*it));
 	}
+	return ret;
 }
 
 template <class T, class FUNC>
@@ -540,13 +601,20 @@ template <class T> void incr(T &t) { ++t; }
 
 template <class A, class B, class FUNC>
 A foldl(const FUNC &func, A acc, const B begin, const B end) {	
-	for (B it = begin; it != end; ++it) { acc = func(acc, *it); }
+	for (B it = begin;
+	     it != end;
+	     ++it)
+	{
+		acc =
+		    func(acc,
+		         *it);
+	}
 	return acc;
 }
 
 template <class A, class B, class FUNC>
 A foldl(const FUNC &func, A acc, const B &list) {
-	foldl(func, acc, list.begin(), list.end());
+	return foldl(func, acc, list.begin(), list.end());
 }
 
 template <class A, class B>
@@ -753,12 +821,13 @@ std::string try_var_term_var_list_elem_name(const std::list<Term> &list) {
 	return it->single.str;
 }
 
-int try_var_term_var_list_elem_init(std::list<Term> &list) {
+std::pair<int, Type> try_var_term_var_list_elem_init(std::list<Term> &list) {
 	if (list.size() > 2) {
 		std::list<Term>::iterator it = list.begin(); ++++it;
-		return handle_term(*it);
+		int ret = handle_term(*it);
+		return std::make_pair(ret, it->metadata.get_type());
 	} else
-		return 0;
+		return std::make_pair(0, build_base_type("unit"));;
 }
 
 std::string word_from_term(const Term &term) {
@@ -819,21 +888,29 @@ begin:
 		       "Invalid variable format");
 		std::string name = try_var_term_var_list_elem_name(term.list);
 		Type type = try_var_term_var_list_elem_type(term.list);
-		int init_value_temp_index = try_var_term_var_list_elem_init(term.list);
+		const std::pair<int, Type> init_val_index_and_type =
+		    try_var_term_var_list_elem_init(term.list); 
+		int init_value_temp_index = init_val_index_and_type.first;
+		ASSERT(init_value_temp_index == 0 ||
+		       same_types(init_val_index_and_type.second, type),
+		       "Variable initialization should use same type");
 		std::string translation = try_var_term_var_list_elem_translate
 		    (type, name, is_decl);
-		cheme_printf_set_stack(FunctionManager::in_global_scope() ?
-		                       PRINTF_STACK_PRE_MAIN : PRINTF_STACK_MAIN);
-		cheme_printf("%s;\n",translation.c_str());
-		cheme_printf_unset_stack();
-		if (init_value_temp_index != 0) {
-			cheme_printf_set_stack(PRINTF_STACK_MAIN);
-			cheme_printf("%s = %s;\n", name.c_str(),
-			             make_temp_name(init_value_temp_index).c_str());
-			cheme_printf_unset_stack();
+		if (type.name != "func" || init_value_temp_index == 0)
+		{ // inital lambdas are a special case, they write themselves
+			cheme_printf_set_zone(FunctionManager::in_global_scope() ?
+			                      PRINTF_ZONE_TOP : PRINTF_ZONE_CURRENT_BODY);
+			cheme_printf("%s;\n",translation.c_str());
+			cheme_printf_unset_zone();
+			if (init_value_temp_index != 0) {
+				cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
+				cheme_printf("%s = %s;\n", name.c_str(),
+				             make_temp_name(init_value_temp_index).c_str());
+				cheme_printf_unset_zone();
+			}
 		}
-//		printf("Var %s Type %s\n", name.c_str(), type_to_string(type).c_str());
 		FunctionManager::add(name, type);
+//		printf("Var %s Type %s\n", name.c_str(), type_to_string(type).c_str());
 		++it;
 		goto begin;
 	}
@@ -975,7 +1052,7 @@ int try_app_term(Term &term) {
 	const std::list<int> temp_indices = try_app_term_params(itType, itTypeRet,
 	                                                        itTerm, itTermEnd);
 //	printf("Application of %s\n", str.c_str());
-	cheme_printf_set_stack(PRINTF_STACK_MAIN);
+	cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
 	int result_index = temp_index++;
 #define TVTVLET try_var_term_var_list_elem_translate
 	cheme_printf("%s = %s(",
@@ -988,7 +1065,7 @@ int try_app_term(Term &term) {
 		             make_temp_name(*it).c_str());
 	cheme_printf(");\n");
 	term.metadata.set_type(*itTypeRet);
-	cheme_printf_unset_stack();
+	cheme_printf_unset_zone();
 	return result_index;
 }
 
@@ -997,14 +1074,14 @@ int try_int_term(Term &term) {
 	if (term.type == TERM_TYPE_SINGLE  &&
 	    term.single.type == TOKEN_TYPE_INT)
 	{
-		cheme_printf_set_stack(PRINTF_STACK_MAIN);
+		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
 		const Type int_type = build_base_type("int");
 		term.metadata.set_type(int_type);
 		cheme_printf("%s = %d;\n",
 		             try_var_term_var_list_elem_translate
 		             (int_type, get_next_temp(), false).c_str(),
 		             term.single.num);
-		cheme_printf_unset_stack();
+		cheme_printf_unset_zone();
 		return temp_index - 1;
 	}
 	else
@@ -1013,10 +1090,10 @@ int try_int_term(Term &term) {
 
 int try_unit_term_unitv_var() {
 #define TVTVLAW try_var_term_var_list_elem_translate
-	cheme_printf_set_stack(PRINTF_STACK_MAIN);
+	cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
 	cheme_printf("%s;\n", TVTVLAW(build_base_type("unit"), get_next_temp(),
 	                              false).c_str());
-	cheme_printf_unset_stack();
+	cheme_printf_unset_zone();
 	return temp_index - 1;
 #undef TVTVLAW
 }
@@ -1043,11 +1120,11 @@ int try_set_term(Term &term) {
 		ASSERT(same_types(FunctionManager::type(var.single.str),
 		                  value.metadata.get_type()),
 		                  "assignment violates types");
-		cheme_printf_set_stack(PRINTF_STACK_MAIN);
+		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
 		cheme_printf("%s = %s;\n",
 		             var.single.str.c_str(),
 		             make_temp_name(value_temp_index).c_str());
-		cheme_printf_unset_stack();
+		cheme_printf_unset_zone();
 		term.metadata.set_type(build_base_type("unit"));
 		return try_unit_term_unitv_var();
 	}
@@ -1125,7 +1202,7 @@ int try_while_term(Term &term) {
 		ASSERT(term.list.size() >= 2, "while should contain condition");
 		std::list<Term>::iterator it1 = term.list.begin(); ++it1;
 		std::list<Term>::iterator it2 = term.list.begin(); ++++it2;
-		cheme_printf_set_stack(PRINTF_STACK_MAIN);
+		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
 		try_while_term_translate_header();
 		FunctionManager::start_scope();
 		const int cond_temp_index = handle_term(*it1);
@@ -1139,7 +1216,7 @@ int try_while_term(Term &term) {
 		FunctionManager::end_scope();
 		try_while_term_translate_footer();
 		term.metadata.set_type(build_base_type("unit"));
-		cheme_printf_unset_stack();
+		cheme_printf_unset_zone();
 		return try_unit_term_unitv_var();
 	} 
 	return 0;
@@ -1226,14 +1303,113 @@ int try_begin_term(Term &term) {
 	return 0;
 }
 
+bool print_lambda_param(bool is_first, const Term &term) {
+	ASSERT(term.type == TERM_TYPE_LIST,
+	       "lambda parameters must be desxrcibed by lists");
+	cheme_printf("%c%s",
+	             is_first ? ' ' : ',',
+	             try_var_term_var_list_elem_translate
+	                 (try_var_term_var_list_elem_type(term.list),
+	                  try_var_term_var_list_elem_name(term.list),
+	                  false).c_str());
+	             
+	return false;
+}
+
+bool is_var_init_term(Term &term) {
+	return (term.index == 2 &&
+	        term.parent != NULL &&
+	        term.parent->parent != NULL &&
+	        is_specific_special_form(*term.parent->parent, "var"));
+}
+
+int try_lambda_term_header(Term &term,
+                           const std::string &name, const Type &type) {
+	const bool is_const_lambda = is_var_init_term(term);
+	std::list<Term>::iterator it = term.parent->list.begin();
+	
+	const int header_index = is_const_lambda ? 0 : temp_index - 1;
+	it = term.list.begin(); ++it;
+	ASSERT(it->type == TERM_TYPE_LIST, "second term of lambda should be param list");
+	cheme_printf("%s(",
+	             try_var_term_var_list_elem_translate(type, name.c_str(),
+	                                                  false).c_str());
+	foldl(print_lambda_param, true, it->list);
+	cheme_printf(")\n{\n");
+	return header_index;
+}
+
+void try_lambda_term_footer() {
+	cheme_printf("}\n");
+}
+
+
+Type try_lambda_term_add_param_var(const Term &term) {
+	ASSERT(term.type == TERM_TYPE_LIST, "lambda parameters should be described "
+	       "by lists, same as variables");
+	const Type ret = try_var_term_var_list_elem_type(term.list);
+	FunctionManager::add(try_var_term_var_list_elem_name(term.list), ret);
+	return ret;
+}
+
 int try_lambda_term(Term &term) {
 	if (is_specific_special_form(term, "lambda")) {
 		ASSERT(term.list.size() > 2,
 		       "lambda should contain parameters and at least one expression");
+
+		const bool is_const_lambda = is_var_init_term(term);	   
+		std::string name = is_const_lambda ?
+	        try_var_term_var_list_elem_name(term.parent->list) :
+		    get_next_temp();
 		std::list<Term>::iterator it = term.list.begin(); ++it;
+
 		FunctionManager::start_scope(); FunctionManager::start_lambda();
-		
+		std::list<Type> type_params = ::map(try_lambda_term_add_param_var,
+		                                    it->list, &*type_params.begin());
+		Type type;
+		if (is_const_lambda) {
+			const Type declared_type =
+			    try_var_term_var_list_elem_type(term.parent->list);
+			std::list<Type>::const_iterator it =
+			    declared_type.type_params.end(); --it;
+			type_params.push_back(*it);
+			ASSERT(same_type_lists(type_params, declared_type.type_params),
+			       "Declared lambda type does not match actual lambda");
+			type = build_poly_type("func", type_params);
+			FunctionManager::add(name, type); // allow recursion
+		}
+		if (is_var_init_term(term)) // if this is const lambda, allow recursion
+		cheme_printf_push_body();
+		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
+			   
+		it = term.list.begin(); ++it; ++it;
+		cheme_printf_push();
+		ASSERT(it->type == TERM_TYPE_LIST, "second term of lambda should be "
+		      "param list");
+		const int final_value_index = foldl(handle_term_for_fold, 0, it,
+		                                    term.list.end());
+		cheme_printf("return %s;\n", make_temp_name(final_value_index).c_str());
+		std::auto_ptr<char> body(cheme_printf_pop());
+		it = term.list.end(); --it;
+		try_lambda_term_header(term, name, it->metadata.get_type());
+		cheme_printf("%s",body.get());
+		try_lambda_term_footer();
+		if (!is_const_lambda) { // otherwise, this was already done above
+			type_params.push_back(it->metadata.get_type());
+			type = build_poly_type("func", type_params);
+		} else { // make sure declared return type matches actual return type
+			std::list<Type>::iterator it2 = type_params.end(); --it2;
+			ASSERT(same_types(it->metadata.get_type(), *it2),
+			       "Declared return type is not the same as "
+			       "inferred return type");
+		}
+
+		cheme_printf_unset_zone();
+		cheme_printf_pop_body();
+
 		FunctionManager::end_scope(); FunctionManager::end_lambda();
+		term.metadata.set_type(type);
+		return -1;
 	}
 	return 0;
 }
@@ -1291,11 +1467,11 @@ void print_header_stuff() {
 }
 
 void print_main_header_stuff() {
-	puts("int main() {");
+	cheme_printf("int main() {\n");
 }
 
 void print_footer_stuff() {
-	puts("}");
+	cheme_printf("}\n");
 }
 
 void add_primitives() {
@@ -1333,34 +1509,39 @@ int main() {
 	TypeManager::init();
 	load_cur_token(stdin);
 	std::list<Term> all_terms;
-	for (int i = 0; i < PRINTF_STACK_COUNT; ++i) {
-		cheme_printf_set_stack(i);
-		cheme_printf_push();
-		cheme_printf_unset_stack();
-	}
+	cheme_printf_push_body();
+	cheme_printf_top_zone_stack.push(cheme_printf_context());
 	FunctionManager::start_scope();
 	add_primitives();
 	
 	for (int i = 0; peep_token(stdin).type != TOKEN_TYPE_EOF; ++i)
 		all_terms.push_back(read_term(stdin, i));
+
+	cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
+	print_main_header_stuff();
 	std::for_each(all_terms.begin(), all_terms.end(), set_term_parent);
 	std::for_each(all_terms.begin(), all_terms.end(), handle_term);
+	print_footer_stuff();
+	cheme_printf_unset_zone();
+	
 	FunctionManager::end_scope();
 	print_header_stuff();
-	cheme_printf_set_stack(PRINTF_STACK_PRE_MAIN);
+	cheme_printf_set_zone(PRINTF_ZONE_TOP);
 	std::auto_ptr<char> pre_main_text(cheme_printf_pop());
 	puts(pre_main_text.get());
-	cheme_printf_unset_stack();
-	print_main_header_stuff();	
-	cheme_printf_set_stack(PRINTF_STACK_MAIN);
-	std::auto_ptr<char> main_text(cheme_printf_pop());
-	puts(main_text.get());
-	cheme_printf_unset_stack();
-	print_footer_stuff();
-	ASSERT(cheme_printf_stack_stack.empty(),
-	       "cheme_printf_stack_stack NOT empty");
-	for (int i = 0; i < PRINTF_STACK_COUNT; ++i) {
-		ASSERT(cheme_printf_stacks[i].empty(),
-		       "cheme_printf_stack NOT empty");
+	cheme_printf_unset_zone();
+	cheme_printf_pop_body();
+	
+	cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
+	while (!cheme_printf_done_body_zones.empty()) {
+		puts(cheme_printf_done_body_zones.front());
+		cheme_printf_done_body_zones.pop();
 	}
+	cheme_printf_unset_zone();
+	ASSERT(cheme_printf_zone_stack.empty(),
+	       "cheme_printf_zone_stack NOT empty at end");
+	ASSERT(cheme_printf_body_zones_stack.empty(),
+	       "cheme_printf_body_zones_stack NOT empty at end");
+	ASSERT(cheme_printf_top_zone_stack.empty(),
+	       "cheme_printf_top_zone_stack NOT empty at end");
 }
