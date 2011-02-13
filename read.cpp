@@ -16,14 +16,21 @@
 
 #include "lexer.h"
 
-#define HIDDEN_CHEME_LT "hidden_cheme_less_than"
-#define HIDDEN_CHEME_GT "hidden_cheme_greater_than"
-#define HIDDEN_CHEME_EQ "hidden_cheme_equals"
+#define HIDDEN_CHEME_LT            "hidden_cheme_less_than"
+#define HIDDEN_CHEME_GT            "hidden_cheme_greater_than"
+#define HIDDEN_CHEME_EQ            "hidden_cheme_equals"
 #define HIDDEN_CHEME_INT_TO_DOUBLE "hidden_cheme_int_to_double"
 #define HIDDEN_CHEME_DOUBLE_TO_INT "hidden_cheme_double_to_int"
-#define HIDDEN_CHEME_ADD_INTS "hidden_cheme_add_ints"
-#define HIDDEN_CHEME_SUB_INTS "hidden_cheme_sub_ints"
-#define HIDDEN_CHEME_CMP_INTS "hidden_cheme_cmp_ints"
+#define HIDDEN_CHEME_ADD_INTS      "hidden_cheme_add_ints"
+#define HIDDEN_CHEME_SUB_INTS      "hidden_cheme_sub_ints"
+#define HIDDEN_CHEME_CMP_INTS      "hidden_cheme_cmp_ints"
+#define HIDDEN_CHEME_ANY_SIZE      "hidden_cheme_any_size"
+#define HIDDEN_CHEME_ANY_DPTR_PTR  "hidden_cheme_any_dptr_ptr"
+#define HIDDEN_CHEME_ANY_DPTR      "hidden_cheme_any_dptr"
+#define HIDDEN_CHEME_ANY_TYPE_PTR  "hidden_cheme_any_type_ptr"
+#define HIDDEN_CHEME_ANY_TYPE      "hidden_cheme_any_type"
+
+#define ANY_SIZE_THRESHOLD 16
 
 struct ErrorContext {
 	long pos;
@@ -54,6 +61,12 @@ int temp_index = 1;
 std::string make_temp_name(int temp_index) {
 	char buf[80];
 	sprintf(buf, "hidden_cheme_temp%08d", temp_index);
+	return std::string(buf);
+}
+
+std::string make_type_desc_name(int index) {
+	char buf[80];
+	sprintf(buf, "hidden_cheme_type_desc%08d", index);
 	return std::string(buf);
 }
 
@@ -257,7 +270,6 @@ public: SameType(const Type &t) : t(t) {}
         bool operator()(const Type &t2) { return same_types(t, t2); } 
 private: Type t;
 };
-
 
 std::string type_to_string(const Type &type) {
 	if (type.type_params.empty()) return type.name;
@@ -631,6 +643,8 @@ private:
 		std::string true_name;
 	};
 	typedef std::map<std::string, std::list<FunctionData> > map_t;
+	typedef std::list< std::pair< std::string, std::list<map_t::iterator> > >
+	    scope_t;
 public:
 	static bool accessible(const std::string &name)
 	{
@@ -649,12 +663,13 @@ public:
 		ASSERT(p != NULL, "FunctionManager::true_name: unknown name");
 		return p->true_name;
 	}
-	static void add(const std::string &name, const Type &newtype)
+	static void add_simple(const std::string &name, const Type &newtype)
 	{
-		add_with_true_name(name, newtype, name);
+		add(name, newtype, name, "");
 	}
-	static void add_with_true_name(const std::string &name, const Type &newtype,
-	                               const std::string &true_name)
+	static void add(const std::string &name, const Type &newtype,
+	                const std::string &true_name,
+	                const std::string &dtor_str)
 	{
 		map_t::iterator it = map.insert
 		    (std::make_pair(name, std::list<FunctionData>())).first;
@@ -671,18 +686,19 @@ public:
 		list.back().scope_depth = cur_scope_depth();
 		list.back().lambda_depth = lambda_depth;
 		list.back().true_name = true_name;
-		scope.back().push_back(it);
-
+		scope.back().second.push_back(it);
+		scope.back().first += dtor_str;
 	}
 	static void start_scope() {
-		scope.push_back(std::list<map_t::iterator>());
+		scope.push_back(scope_t::value_type());
 	}
 	static void list_pop_and_maybe_delete(map_t::iterator it) {
 		it->second.pop_back();
 		if (it->second.empty()) map.erase(it);
 	}
 	static void end_scope() {
-		std::for_each(scope.back().begin(), scope.back().end(),
+		cheme_printf("%s", scope.back().first.c_str());
+		std::for_each(scope.back().second.begin(), scope.back().second.end(),
 		              list_pop_and_maybe_delete);
 		scope.pop_back();
 	}
@@ -693,18 +709,19 @@ public:
 	}	
 	static int cur_scope_depth() { return scope.size() - 1; }
 	static bool in_global_scope() { return lambda_depth == 0;}
+	
 private:
 	static FunctionData *get(const std::string &name) {
 		map_t::iterator it = map.find(name);
 		return it == map.end() ? NULL : &map.find(name)->second.back();
 	}
 	static map_t map;
-	static std::list< std::list<map_t::iterator> > scope;
+	static scope_t scope;
 	static int lambda_depth;
 };
 
 FunctionManager::map_t FunctionManager::map;
-std::list< std::list<FunctionManager::map_t::iterator> > FunctionManager::scope;
+FunctionManager::scope_t FunctionManager::scope;
 int FunctionManager::lambda_depth = 0;
 
 class TypeManager {
@@ -715,6 +732,7 @@ public:
 		base_types.insert("bool");
 		base_types.insert("unit");
 		base_types.insert("double");
+		base_types.insert("any");
 		poly_types.insert(std::make_pair("func", -1));
 	}
 	static bool is_base_type(const std::string &str) {
@@ -734,7 +752,19 @@ private:
 };
 std::set<std::string> TypeManager::base_types;
 std::map<std::string, int> TypeManager::poly_types;
-	
+
+class TypeInstanceManager {
+public:
+	typedef std::map<std::string, int> map_t;
+	static int add(const Type &type) {
+		std::pair<map_t::iterator, bool> pair =
+		    map.insert(std::make_pair(type_to_string(type), map.size()));
+		return pair.first->second;
+	}
+	static map_t map;
+};
+TypeInstanceManager::map_t TypeInstanceManager::map;
+
 bool is_type_term(const Term &term) {
 	return ( (term.type == TERM_TYPE_SINGLE &&
 	          term.single.type == TOKEN_TYPE_WORD &&
@@ -909,7 +939,17 @@ begin:
 				cheme_printf_unset_zone();
 			}
 		}
-		FunctionManager::add(name, type);
+		if (!same_types(type, build_base_type("any"))) {
+			FunctionManager::add_simple(name, type);
+		} else {
+			cheme_printf_push();
+			cheme_printf("if (%s(%s) > %d) free(*%s(%s));\n",
+			             HIDDEN_CHEME_ANY_SIZE, name.c_str(),
+			             ANY_SIZE_THRESHOLD,
+			             HIDDEN_CHEME_ANY_DPTR_PTR, name.c_str());
+			std::auto_ptr<char> p(cheme_printf_pop());
+			FunctionManager::add(name, type, name, std::string(p.get()));
+		}
 //		printf("Var %s Type %s\n", name.c_str(), type_to_string(type).c_str());
 		++it;
 		goto begin;
@@ -1031,6 +1071,8 @@ begin:
 	ASSERT(at_end % 2 == 0, "try_app_term_params: arity mismatch");
 	if (!at_end) {
 		ret.push_back(handle_term(*itTerm));
+		ASSERT(!same_types(itTerm->metadata.get_type(), build_base_type("any")),
+		       "Any type in function calls is not yet supported (by-value)");
 		ASSERT(same_types(itTerm->metadata.get_type(), *itType),
 		       "Expected type of application argument does not match inferred");
 		++itType; ++itTerm;
@@ -1121,9 +1163,42 @@ int try_set_term(Term &term) {
 		                  value.metadata.get_type()),
 		                  "assignment violates types");
 		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
-		cheme_printf("%s = %s;\n",
-		             var.single.str.c_str(),
-		             make_temp_name(value_temp_index).c_str());
+#define LEFT_STR (var.single.str.c_str())
+#define RIGHT_STR (make_temp_name(value_temp_index).c_str())
+		if (same_types(FunctionManager::type(var.single.str),
+		               build_base_type("any")))
+		{
+#define MAX_SIZE ANY_SIZE_THRESHOLD		
+			cheme_printf("{\n");
+			cheme_printf("size_t size1 = %s(%s);\n",
+			             HIDDEN_CHEME_ANY_SIZE, LEFT_STR);
+			cheme_printf("size_t size2 = %s(%s);\n",
+			             HIDDEN_CHEME_ANY_SIZE, RIGHT_STR);
+			cheme_printf("if      (size1 <= %d && size2 >  %d) "
+			             "*%s(%s) = malloc(size2);\n",
+			             MAX_SIZE, MAX_SIZE,
+			             HIDDEN_CHEME_ANY_DPTR_PTR, LEFT_STR);
+			cheme_printf("else if (size1 >  %d && size2 <= %d) "
+			             "free(%s(%s));\n",
+			             MAX_SIZE, MAX_SIZE,
+			             HIDDEN_CHEME_ANY_DPTR, LEFT_STR);
+			cheme_printf("if      (size2 <= %d) "
+			             "%s = %s;\n",
+			             MAX_SIZE, MAX_SIZE, LEFT_STR, RIGHT_STR);
+			cheme_printf("else if (size2 >  %d) {"
+			             "*%s(%s) = *%s(%s);\n"
+			             "memcpy(%s(%s),%s(%s));\n}\n",
+			             MAX_SIZE, MAX_SIZE,
+			             HIDDEN_CHEME_ANY_TYPE_PTR, LEFT_STR,
+			             HIDDEN_CHEME_ANY_TYPE_PTR, RIGHT_STR,
+			             HIDDEN_CHEME_ANY_DPTR_PTR, LEFT_STR,
+			             HIDDEN_CHEME_ANY_DPTR_PTR, RIGHT_STR);
+#undef MAX_SIZE 
+		} else {
+			cheme_printf("%s = %s;\n", LEFT_STR, RIGHT_STR);
+		}
+#undef RIGHT_STR
+#undef LEFT_STR
 		cheme_printf_unset_zone();
 		term.metadata.set_type(build_base_type("unit"));
 		return try_unit_term_unitv_var();
@@ -1348,7 +1423,8 @@ Type try_lambda_term_add_param_var(const Term &term) {
 	ASSERT(term.type == TERM_TYPE_LIST, "lambda parameters should be described "
 	       "by lists, same as variables");
 	const Type ret = try_var_term_var_list_elem_type(term.list);
-	FunctionManager::add(try_var_term_var_list_elem_name(term.list), ret);
+	FunctionManager::add_simple(try_var_term_var_list_elem_name(term.list),
+	                            ret);
 	return ret;
 }
 
@@ -1376,7 +1452,7 @@ int try_lambda_term(Term &term) {
 			ASSERT(same_type_lists(type_params, declared_type.type_params),
 			       "Declared lambda type does not match actual lambda");
 			type = build_poly_type("func", type_params);
-			FunctionManager::add(name, type); // allow recursion
+			FunctionManager::add_simple(name, type); // allow recursion
 		}
 		if (is_var_init_term(term)) // if this is const lambda, allow recursion
 		cheme_printf_push_body();
@@ -1414,6 +1490,24 @@ int try_lambda_term(Term &term) {
 	return 0;
 }
 
+int try_any_is_term(Term &term) {
+	if (is_specific_special_form(term, "any_is")) {
+		ASSERT(term.list.size() == 3,
+		       "any_is should accept type an expression of type any");
+		std::list<Term>::iterator it = term.list.begin();
+		const Type type = type_from_term(*++it);
+		const int value_index = handle_term(*++it);
+		const int result_index = temp_index++;
+		cheme_printf
+		    ("bool %s = (%s(%s) == &%s);\n",
+		     make_temp_name(result_index).c_str(),
+		     HIDDEN_CHEME_ANY_TYPE, make_temp_name(value_index).c_str(),
+		     make_type_desc_name(TypeInstanceManager::add(type)).c_str());
+		term.metadata.set_type(build_base_type("bool"));
+		return result_index;
+	}
+}
+
 int handle_term(Term &term) {
 	Maybe<Type> type;
 	int used_temp_index = 0;
@@ -1433,6 +1527,9 @@ int handle_term(Term &term) {
 	TRY(try_lambda_term)
 	TRY(try_int_term)
 	TRY(try_unit_term)
+	TRY(try_any_is_term)
+	TRY(try_any_to_term)
+	TRY(try_to_any_term)
 	TRY(try_app_term)
 	TRY(try_var_ref_term)
 	ELSE
@@ -1479,30 +1576,30 @@ void add_primitives() {
 	iib.push_back(build_base_type("int"));
 	iib.push_back(build_base_type("int"));
 	iib.push_back(build_base_type("bool"));
-	FunctionManager::add_with_true_name("==", build_poly_type("func", iib),
-	                                    HIDDEN_CHEME_CMP_INTS);
-	FunctionManager::add_with_true_name("<", build_poly_type("func", iib),
-	                                    HIDDEN_CHEME_LT);
-	FunctionManager::add_with_true_name(">", build_poly_type("func", iib),
-	                                    HIDDEN_CHEME_GT);
+	FunctionManager::add("==", build_poly_type("func", iib),
+	                     HIDDEN_CHEME_CMP_INTS, "");
+	FunctionManager::add("<", build_poly_type("func", iib),
+	                     HIDDEN_CHEME_LT, "");
+	FunctionManager::add(">", build_poly_type("func", iib),
+	                     HIDDEN_CHEME_GT, "");
 	std::list<Type> iii;
 	iii.push_back(build_base_type("int"));
 	iii.push_back(build_base_type("int"));
 	iii.push_back(build_base_type("int"));
-	FunctionManager::add("mod", build_poly_type("func", iii));
-	FunctionManager::add("div", build_poly_type("func", iii));
-	FunctionManager::add_with_true_name("+", build_poly_type("func", iii),
-	                                    HIDDEN_CHEME_ADD_INTS);
-	FunctionManager::add_with_true_name("-", build_poly_type("func", iii),
-	                                    HIDDEN_CHEME_SUB_INTS);
+	FunctionManager::add_simple("mod", build_poly_type("func", iii));
+	FunctionManager::add_simple("div", build_poly_type("func", iii));
+	FunctionManager::add("+", build_poly_type("func", iii),
+	                     HIDDEN_CHEME_ADD_INTS, "");
+	FunctionManager::add("-", build_poly_type("func", iii),
+	                     HIDDEN_CHEME_SUB_INTS, "");
 	std::list<Type> id;
 	id.push_back(build_base_type("int"));
 	id.push_back(build_base_type("double"));
-	FunctionManager::add("int2double", build_poly_type("func", id));
+	FunctionManager::add_simple("int2double", build_poly_type("func", id));
 	std::list<Type> di;
 	di.push_back(build_base_type("double"));
 	di.push_back(build_base_type("int"));
-	FunctionManager::add("double2int", build_poly_type("func", di));
+	FunctionManager::add_simple("double2int", build_poly_type("func", di));
 }
 
 int main() {
