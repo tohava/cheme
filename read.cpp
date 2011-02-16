@@ -27,6 +27,7 @@
 #define HIDDEN_CHEME_ANY_SIZE      "hidden_cheme_any_size"
 #define HIDDEN_CHEME_ANY_DPTR_PTR  "hidden_cheme_any_dptr_ptr"
 #define HIDDEN_CHEME_ANY_DPTR      "hidden_cheme_any_dptr"
+#define HIDDEN_CHEME_ANY_SPTR      "hidden_cheme_any_sptr"
 #define HIDDEN_CHEME_ANY_TYPE_PTR  "hidden_cheme_any_type_ptr"
 #define HIDDEN_CHEME_ANY_TYPE      "hidden_cheme_any_type"
 
@@ -1506,7 +1507,85 @@ int try_any_is_term(Term &term) {
 		term.metadata.set_type(build_base_type("bool"));
 		return result_index;
 	}
+	return 0;
 }
+
+void try_to_any_term_assignment(const std::string &any_str,
+                                const std::string &value_str,
+                                const bool reverse) {
+#define LEFT_AND_RIGHT(left_name, right_name, any_data_accessor)            \
+    REVERSE_IF_NEEDED(left_name, right_name,                                \
+	                  std::string(any_data_accessor) + "(" + any_str + ")", \
+                      std::string("&") + value_str)                         \
+
+#define REVERSE_IF_NEEDED(left_name, right_name, left_value, right_value)   \
+    const std::string left_name  = reverse ? (right_value) : (left_value ); \
+    const std::string right_name = reverse ? (left_value ) : (right_value); \
+
+	LEFT_AND_RIGHT(left_dstr, right_dstr, HIDDEN_CHEME_ANY_DPTR)
+	LEFT_AND_RIGHT(left_sstr, right_sstr, HIDDEN_CHEME_ANY_SPTR)
+
+	cheme_printf("if (%s(%s) > %d) memcpy(%s, %s);\n"
+	             "else             memcpy(%s, %s);\n",
+	             HIDDEN_CHEME_ANY_SIZE,
+	             any_str.c_str(), ANY_SIZE_THRESHOLD,
+	             left_dstr.c_str(), right_dstr.c_str(),
+	             left_sstr.c_str(), right_sstr.c_str());
+#undef REVERSE_IF_NEEDED
+#undef LEFT_AND_RIGHT
+}
+
+int try_any_to_term(Term &term) {
+	if (is_specific_special_form(term, "any_to")) {
+		ASSERT(term.list.size() == 3,
+		       "any_to should accept a type and an expression");
+		std::list<Term>::iterator it = term.list.begin();
+		const Type type = type_from_term(*++it);
+		const int value_index = handle_term(*it);
+		ASSERT(same_types(it->metadata.get_type(), build_base_type("any")),
+		       "Expression given to any_to should be of type 'any'");
+		const int result_index = temp_index++;
+		const std::string value_str(make_temp_name(value_index));
+		const std::string result_str(make_temp_name(result_index));
+		const std::string type_desc_str = make_type_desc_name
+		    (TypeInstanceManager::add(type));
+
+		cheme_printf("if (%s(%s) != %s) abort(); /* 'any' type-safety */ \n",
+		             HIDDEN_CHEME_ANY_TYPE, value_str.c_str(),
+		             type_desc_str.c_str());
+		try_var_term_var_list_elem_translate(type, result_str, false);
+		try_to_any_term_assignment(value_str, result_str, true);
+		term.metadata.set_type(type);
+		return result_index;
+	}
+	return 0;
+}
+
+
+int try_to_any_term(Term &term) {
+	if (is_specific_special_form(term, "to_any")) {
+		ASSERT(term.list.size() == 2,
+		       "to_any should accept a single expression");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		const int value_index = handle_term(*it);
+		const std::string value_str(make_temp_name(value_index));
+		const int result_index = temp_index++;
+		const std::string result_str(make_temp_name(result_index));
+		const std::string type_desc_str = make_type_desc_name
+		        (TypeInstanceManager::add(it->metadata.get_type()));
+		cheme_printf("any %s; *%s(%s) = %s;\n",
+		             result_str.c_str(),
+		             HIDDEN_CHEME_ANY_TYPE_PTR,
+		             result_str.c_str(), type_desc_str.c_str());
+		ASSERT(false, "TODO: malloc for big data");
+		try_to_any_term_assignment(result_str, value_str, false);
+		term.metadata.set_type(build_base_type("any"));
+		return result_index;
+	}
+	return 0;
+}
+
+
 
 int handle_term(Term &term) {
 	Maybe<Type> type;
