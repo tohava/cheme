@@ -1,0 +1,7 @@
+(decl ((func int int) putchar))
+(var (int x 111))
+(var ((ptr int) y))
+(<- (ref y) (ref x))
+(putchar (ind y))
+(<- y 114)
+(putchar x)

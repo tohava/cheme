@@ -764,6 +764,8 @@ SIMPLE_TYPEINFO_GETTER(double)
 SIMPLE_TYPEINFO_GETTER(cheme_any)
 TypeInfo get_func_type_info(const std::list<Type> &ignored)
 { TypeInfo t; t.size = sizeof(void(*)()); return t; }
+TypeInfo get_ptr_type_info(const std::list<Type> &ignored)
+{ TypeInfo t; t.size = sizeof(void*); return t; }
 
 class TypeManager {
 public:
@@ -778,6 +780,8 @@ public:
 		// we hope all funcptrs have same size
 		poly_types.insert(std::make_pair
 		                      ("func", std::make_pair(-1, get_func_type_info)));
+		poly_types.insert(std::make_pair
+		                      ("ptr", std::make_pair(1, get_ptr_type_info)));
 	}
 	static bool is_base_type(const std::string &str) {
 		return base_types.find(str) != base_types.end();
@@ -877,6 +881,10 @@ Type build_poly_type(const std::string &str,
 	return t;
 }
 
+Type build_uni_poly_type(const std::string &str, const Type &type) {
+	std::list<Type> l; l.push_back(type);
+	return build_poly_type(str, l);
+}
 
 Type type_from_term(const Term &term) {
 	Type ret;
@@ -962,6 +970,9 @@ std::string try_var_term_var_list_elem_translate
 		       " " +
 		       (is_decl ? "" : "(*") + name + (is_decl ? "" : ")"));
 		first_half = ret + params + "";
+	} else if (type.name == "ptr") {
+		return try_var_term_var_list_elem_translate(*type.type_params.begin(),
+		                                            "*" + name, is_decl);
 	} else {
 		ASSERT(type.type_params.empty(),
 		       "try_var_term_var_list_elem_translate: "
@@ -1216,33 +1227,31 @@ int try_unit_term(Term &term) {
 }
 
 int try_set_term(Term &term) {
-	// TODO: this will soon change with addition of = and <-
-	if (is_specific_special_form(term, "=")) {
+	if (is_specific_special_form(term, "<-")) {
 		ASSERT(term.list.size() == 3, "set special form should get 2 params");
-		std::list<Term>::iterator it = term.list.begin(); 
-		const Term &var = *++it;
-		ASSERT(var.is_single_word(), "variable name should be a single word");
-		ASSERT(FunctionManager::accessible(var.single.str),
-		       "Attempt to do set on non existent/accessible variable");
+		std::list<Term>::iterator it = term.list.begin();
+		Term &ptr = *++it;
+		const int ptr_temp_index = handle_term(ptr);
 		Term &value = *++it;
 		const int value_temp_index = handle_term(value);
-		ASSERT(same_types(FunctionManager::type(var.single.str),
-		                  value.metadata.get_type()),
-		                  "assignment violates types");
+		ASSERT(ptr.metadata.get_type().name == "ptr",
+		       "Assignment must be done through pointer type");
+		Type itype = *ptr.metadata.get_type().type_params.begin();
+		ASSERT(same_types(itype, value.metadata.get_type()),
+		                  "Assignment violates types");
 		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
-#define LEFT_STR (var.single.str.c_str())
+#define LEFT_STR (make_temp_name(ptr_temp_index).c_str())
 #define RIGHT_STR (make_temp_name(value_temp_index).c_str())
-		if (same_types(FunctionManager::type(var.single.str),
-		               build_base_type("any")))
+		if (same_types(itype, build_base_type("any")))
 		{
 #define MAX_SIZE ANY_SIZE_THRESHOLD		
 			cheme_printf("{\n");
-			cheme_printf("size_t size1 = %s(&%s);\n",
+			cheme_printf("size_t size1 = %s(%s);\n",
 			             HIDDEN_CHEME_ANY_SIZE, LEFT_STR);
 			cheme_printf("size_t size2 = %s(&%s);\n",
 			             HIDDEN_CHEME_ANY_SIZE, RIGHT_STR);
 			cheme_printf("if      (size1 <= %d && size2 >  %d) "
-			             "*%s(&%s) = malloc(size2);\n",
+			             "*%s(%s) = malloc(size2);\n",
 			             MAX_SIZE, MAX_SIZE,
 			             HIDDEN_CHEME_ANY_DPTR_PTR, LEFT_STR);
 			cheme_printf("else if (size1 >  %d && size2 <= %d) "
@@ -1250,19 +1259,18 @@ int try_set_term(Term &term) {
 			             MAX_SIZE, MAX_SIZE,
 			             HIDDEN_CHEME_ANY_DPTR, LEFT_STR);
 			cheme_printf("if      (size2 <= %d) "
-			             "%s = %s;\n",
-			             MAX_SIZE, MAX_SIZE, LEFT_STR, RIGHT_STR);
+			             "*%s = %s;\n",
+			             MAX_SIZE, LEFT_STR, RIGHT_STR);
 			cheme_printf("else if (size2 >  %d) {"
-			             "*%s(&%s) = *%s(&%s);\n"
-			             "memcpy(%s(&%s),%s(&%s));\n}\n",
-			             MAX_SIZE, MAX_SIZE,
-			             HIDDEN_CHEME_ANY_TYPE_PTR, LEFT_STR,
+			             "*%s(%s) = *%s(&%s);\n"
+			             "memcpy(%s(%s),%s(&%s));\n}\n",
+			             MAX_SIZE, HIDDEN_CHEME_ANY_TYPE_PTR, LEFT_STR,
 			             HIDDEN_CHEME_ANY_TYPE_PTR, RIGHT_STR,
 			             HIDDEN_CHEME_ANY_DPTR_PTR, LEFT_STR,
 			             HIDDEN_CHEME_ANY_DPTR_PTR, RIGHT_STR);
 #undef MAX_SIZE 
 		} else {
-			cheme_printf("%s = %s;\n", LEFT_STR, RIGHT_STR);
+			cheme_printf("*%s = %s;\n", LEFT_STR, RIGHT_STR);
 		}
 #undef RIGHT_STR
 #undef LEFT_STR
@@ -1660,7 +1668,55 @@ int try_to_any_term(Term &term) {
 	return 0;
 }
 
+int try_ref_term(Term &term) {
+	if (is_specific_special_form(term, "ref")) {
+		ASSERT(term.list.size() == 2,
+		       "ref should accept only a single parameter which is a variable");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		std::string str = it->single.str;
+		ASSERT(it->is_single_word(), "ref second parameter should be a word");
+		ASSERT(FunctionManager::accessible(str),
+		       "Cannot access variable or it does not exist");
+		Type type = FunctionManager::type(str);
+		Type ptype = build_uni_poly_type("ptr", type);
+		const int result_index = temp_index++;
+#define TVTVLET try_var_term_var_list_elem_translate
+		cheme_printf("%s = &%s;\n",
+		             TVTVLET(ptype, make_temp_name(result_index).c_str(),
+	                         false).c_str(),
+		             FunctionManager::true_name(str).c_str());
+#undef TVTVLET
+		term.metadata.set_type(ptype);
+		return result_index;
 
+		
+	}
+	return 0;
+}
+
+int try_ind_term(Term &term) {
+	if (is_specific_special_form(term, "ind")) {
+		ASSERT(term.list.size() == 2,
+		       "ind should accept only a single parameter which is a pointer "
+		       "expression");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		const int value_index = handle_term(*it);
+		const Type &type = it->metadata.get_type();
+		ASSERT(type.name == "ptr",
+		       "ind second parameter type should be a pointer type");
+		Type itype = *type.type_params.begin();
+		const int result_index = temp_index++;
+#define TVTVLET try_var_term_var_list_elem_translate
+		cheme_printf("%s = *%s;\n",
+		             TVTVLET(itype, make_temp_name(result_index).c_str(),
+	                         false).c_str(),
+		             make_temp_name(value_index).c_str());
+#undef TVTVLET
+		term.metadata.set_type(itype);
+		return result_index;
+	}
+	return 0;
+}
 
 int handle_term(Term &term) {
 	Maybe<Type> type;
@@ -1679,6 +1735,8 @@ int handle_term(Term &term) {
 	TRY(try_if_term)
 	TRY(try_begin_term)
 	TRY(try_lambda_term)
+	TRY(try_ref_term)
+	TRY(try_ind_term)
 	TRY(try_int_term)
 	TRY(try_unit_term)
 	TRY(try_any_is_term)
