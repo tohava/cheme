@@ -31,7 +31,23 @@
 #define HIDDEN_CHEME_ANY_TYPE_PTR  "hidden_cheme_any_type_ptr"
 #define HIDDEN_CHEME_ANY_TYPE      "hidden_cheme_any_type"
 
-#define ANY_SIZE_THRESHOLD 16
+
+#define ANY_SIZE_THRESHOLD     16
+#define ANY_SIZE_THRESHOLD_STR "16"
+
+#define CHEME_TYPE_BOOL_STR \
+    "typedef enum {false = 0      , true = 1      } bool;"
+     typedef enum {cheme_false = 0, cheme_true = 1} cheme_bool;
+#define CHEME_TYPE_UNIT_STR \
+    "typedef struct {} unit;"
+     typedef struct {} cheme_unit;
+#define SS1 ANY_SIZE_THRESHOLD_STR
+#define SS2 ANY_SIZE_THRESHOLD
+struct cheme_type_desc;
+#define CHEME_TYPE_ANY_STR \
+    "typedef struct { type_desc *t;       char s["SS1"]; char *d; } any;"
+     typedef struct { cheme_type_desc *t; char s[ SS2 ]; char *d; } cheme_any;
+	 
 
 struct ErrorContext {
 	long pos;
@@ -633,6 +649,9 @@ A foldl(const FUNC &func, A acc, const B &list) {
 template <class A, class B>
 const A &pair_first(const std::pair<A,B> &pair) { return pair.first; }
 
+template <int V, class T>
+int fixed_value(const T &) { return V; }
+
 
 class FunctionManager {
 private:
@@ -725,16 +744,40 @@ FunctionManager::map_t FunctionManager::map;
 FunctionManager::scope_t FunctionManager::scope;
 int FunctionManager::lambda_depth = 0;
 
+class TypeInfo {
+public:
+	int size;
+};
+
+typedef TypeInfo (*TypeInfoFunc_t)(const std::list<Type> &type_params); 
+
+#define SIMPLE_TYPEINFO_GETTER(type)									\
+TypeInfo get_##type##_type_info(const std::list<Type> &ignored)         \
+{ TypeInfo t; t.size = sizeof(type); return t;}
+
+
+SIMPLE_TYPEINFO_GETTER(int)
+SIMPLE_TYPEINFO_GETTER(char)
+SIMPLE_TYPEINFO_GETTER(cheme_bool)
+SIMPLE_TYPEINFO_GETTER(cheme_unit)
+SIMPLE_TYPEINFO_GETTER(double)
+SIMPLE_TYPEINFO_GETTER(cheme_any)
+TypeInfo get_func_type_info(const std::list<Type> &ignored)
+{ TypeInfo t; t.size = sizeof(void(*)()); return t; }
+
 class TypeManager {
 public:
 	static void init() {
-		base_types.insert("int");
-		base_types.insert("char");
-		base_types.insert("bool");
-		base_types.insert("unit");
-		base_types.insert("double");
-		base_types.insert("any");
-		poly_types.insert(std::make_pair("func", -1));
+		typedef std::list<Type> L;
+		base_types.insert(std::make_pair("int",    get_int_type_info));
+		base_types.insert(std::make_pair("char",   get_char_type_info));
+		base_types.insert(std::make_pair("bool",   get_cheme_bool_type_info));
+		base_types.insert(std::make_pair("unit",   get_cheme_unit_type_info));
+		base_types.insert(std::make_pair("double", get_double_type_info));
+		base_types.insert(std::make_pair("any",    get_cheme_any_type_info));
+		// we hope all funcptrs have same size
+		poly_types.insert(std::make_pair
+		                      ("func", std::make_pair(-1, get_func_type_info)));
 	}
 	static bool is_base_type(const std::string &str) {
 		return base_types.find(str) != base_types.end();
@@ -745,26 +788,49 @@ public:
 	static int poly_type_arity(const std::string &str) {
 		ASSERT(is_poly_type(str),
 		       "poly_type_arity: called with nonexistent type");
-		return poly_types[str];
+		return poly_types[str].first;
+	}
+	static TypeInfoFunc_t type_info_getter(const std::string &str) {
+		ASSERT((is_poly_type(str) ? 1 : 0) + (is_base_type(str) ? 1 : 0) == 1,
+		       "type_info_getter: unknown type");
+		return is_poly_type(str) ?
+		    poly_types[str].second : base_types[str];
 	}
 private:
-	static std::set<std::string> base_types;
-	static std::map<std::string, int> poly_types;
+	static std::map<std::string, TypeInfoFunc_t> base_types;
+	static std::map<std::string, std::pair<int, TypeInfoFunc_t> > poly_types;
 };
-std::set<std::string> TypeManager::base_types;
-std::map<std::string, int> TypeManager::poly_types;
+std::map<std::string, TypeInfoFunc_t> TypeManager::base_types;
+std::map<std::string, std::pair<int, TypeInfoFunc_t> > TypeManager::poly_types;
 
 class TypeInstanceManager {
+private:
+	class Compare {
+	public:
+		bool operator()(const Type &t1, const Type &t2)
+		{ return strcmp(type_to_string(t1).c_str(),
+		                type_to_string(t2).c_str()) < 0; }
+	};
+	typedef std::map<Type, int, Compare> map_t;
 public:
-	typedef std::map<std::string, int> map_t;
 	static int add(const Type &type) {
 		std::pair<map_t::iterator, bool> pair =
-		    map.insert(std::make_pair(type_to_string(type), map.size()));
+		    map.insert(std::make_pair(type, map.size()));
 		return pair.first->second;
+	}
+	static std::list< std::pair<Type, int> > all() {
+		std::list< std::pair<Type, int> > ret;
+		for (map_t::iterator it = map.begin(); it != map.end(); ++it)
+			ret.push_back(*it);
+		return ret;
 	}
 	static map_t map;
 };
 TypeInstanceManager::map_t TypeInstanceManager::map;
+
+int type_size(const Type &t) {
+	return (TypeManager::type_info_getter(t.name))(t.type_params).size;
+}
 
 bool is_type_term(const Term &term) {
 	return ( (term.type == TERM_TYPE_SINGLE &&
@@ -944,7 +1010,7 @@ begin:
 			FunctionManager::add_simple(name, type);
 		} else {
 			cheme_printf_push();
-			cheme_printf("if (%s(%s) > %d) free(*%s(%s));\n",
+			cheme_printf("if (%s(&%s) > %d) free(*%s(&%s));\n",
 			             HIDDEN_CHEME_ANY_SIZE, name.c_str(),
 			             ANY_SIZE_THRESHOLD,
 			             HIDDEN_CHEME_ANY_DPTR_PTR, name.c_str());
@@ -1171,12 +1237,12 @@ int try_set_term(Term &term) {
 		{
 #define MAX_SIZE ANY_SIZE_THRESHOLD		
 			cheme_printf("{\n");
-			cheme_printf("size_t size1 = %s(%s);\n",
+			cheme_printf("size_t size1 = %s(&%s);\n",
 			             HIDDEN_CHEME_ANY_SIZE, LEFT_STR);
-			cheme_printf("size_t size2 = %s(%s);\n",
+			cheme_printf("size_t size2 = %s(&%s);\n",
 			             HIDDEN_CHEME_ANY_SIZE, RIGHT_STR);
 			cheme_printf("if      (size1 <= %d && size2 >  %d) "
-			             "*%s(%s) = malloc(size2);\n",
+			             "*%s(&%s) = malloc(size2);\n",
 			             MAX_SIZE, MAX_SIZE,
 			             HIDDEN_CHEME_ANY_DPTR_PTR, LEFT_STR);
 			cheme_printf("else if (size1 >  %d && size2 <= %d) "
@@ -1187,8 +1253,8 @@ int try_set_term(Term &term) {
 			             "%s = %s;\n",
 			             MAX_SIZE, MAX_SIZE, LEFT_STR, RIGHT_STR);
 			cheme_printf("else if (size2 >  %d) {"
-			             "*%s(%s) = *%s(%s);\n"
-			             "memcpy(%s(%s),%s(%s));\n}\n",
+			             "*%s(&%s) = *%s(&%s);\n"
+			             "memcpy(%s(&%s),%s(&%s));\n}\n",
 			             MAX_SIZE, MAX_SIZE,
 			             HIDDEN_CHEME_ANY_TYPE_PTR, LEFT_STR,
 			             HIDDEN_CHEME_ANY_TYPE_PTR, RIGHT_STR,
@@ -1500,7 +1566,7 @@ int try_any_is_term(Term &term) {
 		const int value_index = handle_term(*++it);
 		const int result_index = temp_index++;
 		cheme_printf
-		    ("bool %s = (%s(%s) == &%s);\n",
+		    ("bool %s = (%s(&%s) == %s);\n",
 		     make_temp_name(result_index).c_str(),
 		     HIDDEN_CHEME_ANY_TYPE, make_temp_name(value_index).c_str(),
 		     make_type_desc_name(TypeInstanceManager::add(type)).c_str());
@@ -1512,10 +1578,11 @@ int try_any_is_term(Term &term) {
 
 void try_to_any_term_assignment(const std::string &any_str,
                                 const std::string &value_str,
-                                const bool reverse) {
+                                const bool reverse,
+                                const int size) {
 #define LEFT_AND_RIGHT(left_name, right_name, any_data_accessor)            \
     REVERSE_IF_NEEDED(left_name, right_name,                                \
-	                  std::string(any_data_accessor) + "(" + any_str + ")", \
+	                  std::string(any_data_accessor) + "(&" + any_str + ")",\
                       std::string("&") + value_str)                         \
 
 #define REVERSE_IF_NEEDED(left_name, right_name, left_value, right_value)   \
@@ -1525,12 +1592,12 @@ void try_to_any_term_assignment(const std::string &any_str,
 	LEFT_AND_RIGHT(left_dstr, right_dstr, HIDDEN_CHEME_ANY_DPTR)
 	LEFT_AND_RIGHT(left_sstr, right_sstr, HIDDEN_CHEME_ANY_SPTR)
 
-	cheme_printf("if (%s(%s) > %d) memcpy(%s, %s);\n"
-	             "else             memcpy(%s, %s);\n",
-	             HIDDEN_CHEME_ANY_SIZE,
-	             any_str.c_str(), ANY_SIZE_THRESHOLD,
-	             left_dstr.c_str(), right_dstr.c_str(),
-	             left_sstr.c_str(), right_sstr.c_str());
+	const std::string
+	    &left_str = size > ANY_SIZE_THRESHOLD ? left_dstr : left_sstr,
+	    &right_str = size > ANY_SIZE_THRESHOLD ? right_dstr : right_sstr;
+	cheme_printf("memcpy(%s, %s, %d);\n",
+	             left_str.c_str(), right_str.c_str(), size);
+
 #undef REVERSE_IF_NEEDED
 #undef LEFT_AND_RIGHT
 }
@@ -1541,7 +1608,7 @@ int try_any_to_term(Term &term) {
 		       "any_to should accept a type and an expression");
 		std::list<Term>::iterator it = term.list.begin();
 		const Type type = type_from_term(*++it);
-		const int value_index = handle_term(*it);
+		const int value_index = handle_term(*++it);
 		ASSERT(same_types(it->metadata.get_type(), build_base_type("any")),
 		       "Expression given to any_to should be of type 'any'");
 		const int result_index = temp_index++;
@@ -1550,11 +1617,14 @@ int try_any_to_term(Term &term) {
 		const std::string type_desc_str = make_type_desc_name
 		    (TypeInstanceManager::add(type));
 
-		cheme_printf("if (%s(%s) != %s) abort(); /* 'any' type-safety */ \n",
+		cheme_printf("if (%s(&%s) != %s) abort(); /* 'any' type-safety */ \n",
 		             HIDDEN_CHEME_ANY_TYPE, value_str.c_str(),
 		             type_desc_str.c_str());
-		try_var_term_var_list_elem_translate(type, result_str, false);
-		try_to_any_term_assignment(value_str, result_str, true);
+		cheme_printf("%s;\n",
+		             try_var_term_var_list_elem_translate(type, result_str,
+					                                      false).c_str());
+		try_to_any_term_assignment(value_str, result_str, true,
+		                           type_size(type));
 		term.metadata.set_type(type);
 		return result_index;
 	}
@@ -1569,16 +1639,21 @@ int try_to_any_term(Term &term) {
 		std::list<Term>::iterator it = term.list.begin(); ++it;
 		const int value_index = handle_term(*it);
 		const std::string value_str(make_temp_name(value_index));
+		const Type &type = it->metadata.get_type();
+		const int size = type_size(type);
 		const int result_index = temp_index++;
 		const std::string result_str(make_temp_name(result_index));
 		const std::string type_desc_str = make_type_desc_name
-		        (TypeInstanceManager::add(it->metadata.get_type()));
-		cheme_printf("any %s; *%s(%s) = %s;\n",
+		    (TypeInstanceManager::add(type));
+		cheme_printf("any %s; *%s(&%s) = %s;\n",
 		             result_str.c_str(),
 		             HIDDEN_CHEME_ANY_TYPE_PTR,
 		             result_str.c_str(), type_desc_str.c_str());
-		ASSERT(false, "TODO: malloc for big data");
-		try_to_any_term_assignment(result_str, value_str, false);
+		if (size > ANY_SIZE_THRESHOLD)
+			cheme_printf("*%s(&%s) = malloc(%d);\n",
+			             HIDDEN_CHEME_ANY_DPTR_PTR, result_str.c_str(), size);
+		try_to_any_term_assignment(result_str, value_str, false,
+		                           type_size(it->metadata.get_type()));
 		term.metadata.set_type(build_base_type("any"));
 		return result_index;
 	}
@@ -1620,9 +1695,42 @@ int handle_term(Term &term) {
 	return used_temp_index;
 }
 
+void print_type_desc(const std::pair<Type, int> &pair) {
+// we need too access to printf for this one
+#undef printf
+	printf("type_desc %s_data = {%d};\n",
+	       make_type_desc_name(pair.second).c_str(), type_size(pair.first));
+	printf("type_desc * const %s = &%s_data;\n",
+	       make_type_desc_name(pair.second).c_str(),
+	       make_type_desc_name(pair.second).c_str());
+	       
+#define printf DO NOT USE THIS
+}
+
+void print_type_descs() {
+	std::list< std::pair<Type, int> > desc_pairs = TypeInstanceManager::all();
+	std::for_each(desc_pairs.begin(), desc_pairs.end(),
+	              print_type_desc);
+}
+
 void print_header_stuff() {
-	puts("typedef struct {} unit;\n"
-	     "static unit unitv() { unit v; return v; }");
+	puts("void abort(void); void *malloc(long size); void free(void *ptr);\n");
+	puts("void *memcpy(void *dest, const void *src, long n);");
+	puts("typedef struct { int size; } type_desc;");
+	puts(CHEME_TYPE_BOOL_STR);
+	puts(CHEME_TYPE_UNIT_STR);
+	puts("static unit unitv() { unit v; return v; }");
+	puts(CHEME_TYPE_ANY_STR);
+	puts("static type_desc**"HIDDEN_CHEME_ANY_TYPE_PTR"(any *a) "
+	     "{return &a->t;}");
+	puts("static type_desc *"HIDDEN_CHEME_ANY_TYPE    "(any *a) "
+	     "{return  a->t;}");
+	puts("static char **    "HIDDEN_CHEME_ANY_DPTR_PTR"(any *a) "
+	     "{return &a->d;}");
+	puts("static char *     "HIDDEN_CHEME_ANY_SPTR    "(any *a) "
+	     "{return a->s;}");
+	
+	puts("static int hidden_cheme_any_size(any *a) {return a->t->size;}");
 	puts("static int "HIDDEN_CHEME_LT"(int x, int y) "
 	     "{ return x < y; }");
 	puts("static int "HIDDEN_CHEME_GT"(int x, int y) "
@@ -1639,7 +1747,7 @@ void print_header_stuff() {
 	     "{ return x == y; }");
 	puts("static double int2double(int x) { return (double)x; }");
 	puts("static int double2int(double x) { return (int)x; }");
-	puts("typedef enum { false = 0, true = 1} bool;"); 
+	print_type_descs();
 }
 
 void print_main_header_stuff() {
@@ -1697,10 +1805,10 @@ int main() {
 	print_main_header_stuff();
 	std::for_each(all_terms.begin(), all_terms.end(), set_term_parent);
 	std::for_each(all_terms.begin(), all_terms.end(), handle_term);
+	FunctionManager::end_scope();
 	print_footer_stuff();
 	cheme_printf_unset_zone();
 	
-	FunctionManager::end_scope();
 	print_header_stuff();
 	cheme_printf_set_zone(PRINTF_ZONE_TOP);
 	std::auto_ptr<char> pre_main_text(cheme_printf_pop());

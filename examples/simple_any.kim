@@ -1,0 +1,8 @@
+(decl ((func int int) putchar))
+(var (any x (to_any 111)))
+(var (int y (if (== (any_to int x) 111) 114 111)))
+(var (int z (if (any_is int x)          105 111)))
+(putchar (any_to int x))
+(putchar y)
+(putchar z)
+  
