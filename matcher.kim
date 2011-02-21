@@ -1,0 +1,65 @@
+(type-synonym ((ptr (cyclic-tup (1 (any 1)))) anylist))
+
+(var 
+ ((func any (ptr char)) first_word
+  (lambda ((any a))
+	(if (any_is anylist a)
+		(begin (var (anylist l (any_to anylist a)))
+		  (if (any_is (ptr char) (car l)) (any_to (ptr char) (car l)) "")))))
+ 
+ ((func any bool) is_special 
+  (lambda ((any a))
+	(=c= (ind (first_word a) ':'))))
+ 
+ ((func any (ptr char)) get_special
+  (lambda ((any a))
+	(+p (first_word a) 1)))
+ 
+ ((func (ptr anylist) any) car 
+  (lambda ((ptr anylist) l))
+	(at (ind l) 0)))
+ 
+ ((func (ptr anylist) anylist) cdr
+  (lambda ((ptr anylist) l)
+	(at (ind l) 1)))
+
+ ((func any any bool) any_compare
+  (lambda ((any a) (any b))
+	(and
+	 (=t= (any_type a) (any_type b))
+	 (cond ((any_is (ptr char) a)
+			(=s= (any_to (ptr char) a) (any_to (ptr char) b)))
+		   ((any_is anylist a)
+			(var (func anylist anylist bool) compare_lists
+				 (lambda ((anylist a) (anylist b))
+				   (cond ((and (null a) (null b)) true)
+						 (     (null a)           false)
+						 (              (null b)  false)
+						 (true (and 
+								(any_compare (car a) (car b))
+								(compare_lists (cdr a) (cdr b)))))))
+			(compare_lists (any_to anylist a) (any_to anylist b)))
+		   (true		   
+			(memcmp (any_data a) (any_data b) (type_size (any_type a))))))))
+ 
+			
+
+(var ((func any any any) match
+	  (lambda ((any expr) (anylist data))
+		(if (is_special expr)
+			(begin (var ((ptr char) s (get_special a)))
+			  (cond ((=s= s "*") 
+					 (begin (var ((any star_param_1 (car (cdr expr_list)))
+					   (any star_param_2 (car (cdr (cdr expr_list))))
+					   (any next star_param_1 data)
+					   (any result (match star_param_2 next))
+					   (if (any_is unit result) 
+						   (match star_param_2 next)
+						   result)))))
+					((=s= s "or")
+					 (foldlp (lambda ((bool acc) (any expr_list) (any data)) 
+							   (or acc (match data expr_list))) 
+							 data
+							 false 
+							 (cdr expr_list)))))
+			(if (any_compare expr data) data (to_any unitv))))))
