@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -247,6 +246,28 @@ private:
 	T data;
 };
 
+template <class T, class S>
+class BinTyped {
+public:
+	bool is_left() { return left; }
+	bool is_right() { return !left; }
+	const T &get_left() {
+		ASSERT(is_left(), "BinTyped: get_left called when not left");
+		return t;
+	}
+	const S &get_right() {
+		ASSERT(is_right(), "BinTyped: get_right called when not right");
+		return s;
+	}
+	void set(const T &t) { left = true;  this->t = t; }
+	void set(const S &s) { left = false; this->s = s; }
+	BinTyped(const T &t) : left(true)  { this->t = t; }
+	BinTyped(const S &s) : left(false) { this->s = s; }
+private:
+	bool left;
+	T t; S s;
+};
+
 
 class Type {
 public:
@@ -346,6 +367,9 @@ struct Term {
 	}
 	bool is_single_word() const {
 		return type == TERM_TYPE_SINGLE && single.type == TOKEN_TYPE_WORD;
+	}
+	bool is_single_int() const {
+		return type == TERM_TYPE_SINGLE && single.type == TOKEN_TYPE_INT;
 	}
 };
 
@@ -836,30 +860,9 @@ int type_size(const Type &t) {
 	return (TypeManager::type_info_getter(t.name))(t.type_params).size;
 }
 
-bool is_type_term(const Term &term) {
-	return ( (term.type == TERM_TYPE_SINGLE &&
-	          term.single.type == TOKEN_TYPE_WORD &&
-	          TypeManager::is_base_type(term.single.str)) ||
-	         (term.type == TERM_TYPE_LIST &&
-	          !term.list.empty() &&
-	          term.list.begin()->is_single_word() &&
-	          TypeManager::is_poly_type(term.list.begin()->single.str)));
-}
-
-bool is_var_name_term(const Term &term) {
-	return !is_type_term(term) && term.is_single_word();
-}
-
-bool is_not_type_term(const Term &term) {
-	return !is_type_term(term);
-}
-
 bool is_not_list(const Term &term) {
 	return term.type != TERM_TYPE_LIST;
 }
-
-
-
 
 Type build_base_type(const std::string &str) {
 	Type t;
@@ -896,7 +899,7 @@ Type type_from_term(const Term &term) {
 		ASSERT(!term.list.empty(),
 		        "type_from_term: Found empty list where type should be");
 		ASSERT(term.list.begin()->is_single_word(),
-		       "type_from_Term: poly type name must be a word");
+		       "type_from_term: poly type name must be a word");
 		ret.name = term.list.begin()->single.str;
 		std::list<Term>::const_iterator it = term.list.begin(); ++it;
 		for ( ; it != term.list.end(); ++it)
@@ -913,15 +916,13 @@ int handle_term_for_fold(int ignored, Term &term) {
 
 Type try_var_term_var_list_elem_type(const std::list<Term> &list) {
 	ASSERT(!list.empty(), "try_var_term_var_list_elem_type: missing type");
-	ASSERT(is_type_term(*list.begin()),
-	       "try_var_term_var_list_elem_type: type should be 1st element");
 	return type_from_term(*list.begin());
 }
 
 std::string try_var_term_var_list_elem_name(const std::list<Term> &list) {
 	ASSERT(list.size() > 1, "try_var_term_var_list_elem_name: missing name");
 	std::list<Term>::const_iterator it = list.begin(); ++it;
-	ASSERT(is_var_name_term(*it),
+	ASSERT(it->is_single_word(),
 	       "try_var_term_var_list_elem_name: name should be 2nd element");
 	return it->single.str;
 }
