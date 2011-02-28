@@ -1,0 +1,4 @@
+(type_pack int celsius)
+(type_pack int farenheit)
+(var (celsius c) (farenheit f))
+(+ c f)

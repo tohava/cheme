@@ -773,10 +773,11 @@ public:
 	int size;
 };
 
-typedef TypeInfo (*TypeInfoFunc_t)(const std::list<Type> &type_params); 
+typedef TypeInfo (*TypeInfoFunc_t)(const void *v,
+                                   const std::list<Type> &type_params); 
 
-#define SIMPLE_TYPEINFO_GETTER(type)									\
-TypeInfo get_##type##_type_info(const std::list<Type> &ignored)         \
+#define SIMPLE_TYPEINFO_GETTER(type)									 \
+TypeInfo get_##type##_type_info(const void *v, const std::list<Type> &ignored) \
 { TypeInfo t; t.size = sizeof(type); return t;}
 
 
@@ -786,26 +787,38 @@ SIMPLE_TYPEINFO_GETTER(cheme_bool)
 SIMPLE_TYPEINFO_GETTER(cheme_unit)
 SIMPLE_TYPEINFO_GETTER(double)
 SIMPLE_TYPEINFO_GETTER(cheme_any)
-TypeInfo get_func_type_info(const std::list<Type> &ignored)
+TypeInfo get_func_type_info(const void *v, const std::list<Type> &ignored)
 { TypeInfo t; t.size = sizeof(void(*)()); return t; }
-TypeInfo get_ptr_type_info(const std::list<Type> &ignored)
+TypeInfo get_ptr_type_info(const void *v, const std::list<Type> &ignored)
 { TypeInfo t; t.size = sizeof(void*); return t; }
+TypeInfo get_packed_type_info(const void *v, const std::list<Type> &ignored);
+
 
 class TypeManager {
 public:
 	static void init() {
 		typedef std::list<Type> L;
-		base_types.insert(std::make_pair("int",    get_int_type_info));
-		base_types.insert(std::make_pair("char",   get_char_type_info));
-		base_types.insert(std::make_pair("bool",   get_cheme_bool_type_info));
-		base_types.insert(std::make_pair("unit",   get_cheme_unit_type_info));
-		base_types.insert(std::make_pair("double", get_double_type_info));
-		base_types.insert(std::make_pair("any",    get_cheme_any_type_info));
+#define NP(x) std::make_pair(x, (void *)NULL)
+#define BTI(x) base_types.insert(x)
+		BTI(std::make_pair("int",   NP(get_int_type_info)));
+		BTI(std::make_pair("char",  NP(get_char_type_info)));
+		BTI(std::make_pair("bool",  NP(get_cheme_bool_type_info)));
+		BTI(std::make_pair("unit",  NP(get_cheme_unit_type_info)));
+		BTI(std::make_pair("double",NP(get_double_type_info)));
+		BTI(std::make_pair("any",   NP(get_cheme_any_type_info)));
+#undef BTI
 		// we hope all funcptrs have same size
 		poly_types.insert(std::make_pair
-		                      ("func", std::make_pair(-1, get_func_type_info)));
+		                      ("func", std::make_pair(-1,
+		                                              NP(get_func_type_info))));
 		poly_types.insert(std::make_pair
-		                      ("ptr", std::make_pair(1, get_ptr_type_info)));
+		                      ("ptr", std::make_pair(1,
+		                                             NP(get_ptr_type_info))));
+#undef NP
+	}
+	static void add_base_type(const std::string &str,
+	                          TypeInfoFunc_t func, const void *ptr) {
+		base_types[str] = std::make_pair(func, ptr);
 	}
 	static bool is_base_type(const std::string &str) {
 		return base_types.find(str) != base_types.end();
@@ -818,18 +831,30 @@ public:
 		       "poly_type_arity: called with nonexistent type");
 		return poly_types[str].first;
 	}
-	static TypeInfoFunc_t type_info_getter(const std::string &str) {
+	static std::pair<TypeInfoFunc_t, const void *> type_info_getter_pair
+	    (const std::string &str)
+	{
 		ASSERT((is_poly_type(str) ? 1 : 0) + (is_base_type(str) ? 1 : 0) == 1,
 		       "type_info_getter: unknown type");
 		return is_poly_type(str) ?
 		    poly_types[str].second : base_types[str];
 	}
 private:
-	static std::map<std::string, TypeInfoFunc_t> base_types;
-	static std::map<std::string, std::pair<int, TypeInfoFunc_t> > poly_types;
+	static std::map<std::string, std::pair<TypeInfoFunc_t, const void *> >
+	    base_types;
+	static std::map<std::string,
+	                std::pair<int,
+	                          std::pair<TypeInfoFunc_t,
+	                                    const void *> > > poly_types;
 };
-std::map<std::string, TypeInfoFunc_t> TypeManager::base_types;
-std::map<std::string, std::pair<int, TypeInfoFunc_t> > TypeManager::poly_types;
+
+std::map<std::string, std::pair<TypeInfoFunc_t, const void *> >
+    TypeManager::base_types;
+std::map<std::string,
+                std::pair<int,
+                          std::pair<TypeInfoFunc_t,
+                                    const void *> > > TypeManager::poly_types;
+
 
 class TypeInstanceManager {
 private:
@@ -856,8 +881,10 @@ public:
 };
 TypeInstanceManager::map_t TypeInstanceManager::map;
 
-int type_size(const Type &t) {
-	return (TypeManager::type_info_getter(t.name))(t.type_params).size;
+TypeInfo type_info(const Type &t) {
+	std::pair<TypeInfoFunc_t, const void *> pair =
+	    TypeManager::type_info_getter_pair(t.name);
+	return pair.first(pair.second, t.type_params);
 }
 
 bool is_not_list(const Term &term) {
@@ -907,6 +934,34 @@ Type type_from_term(const Term &term) {
 	}
 	return ret;
 }
+
+class TypePackManager {
+public:
+	static void add(const std::string &str, const Type &type) {
+		map.insert(std::make_pair(str, type));
+	}
+	static bool is_type_pack(const std::string &str) {
+		return try_unpack(str) != NULL;
+	}
+	static const Type *try_unpack(const std::string &str) {
+		std::map<std::string, Type>::const_iterator it = map.find(str);
+		return (it == map.end()) ? NULL : &it->second;
+		ASSERT(it != map.end(), "TypePackManager::unpack - unknown type");
+		return &it->second;
+	}
+	static const Type &unpack(const std::string &str) {
+		const Type *p = try_unpack(str);
+		ASSERT(p != NULL, "TypePackManager::unpack - unknown type");
+		return *p;
+	}
+private:
+	static std::map<std::string, Type> map;
+};
+
+TypeInfo get_packed_type_info(const void *v, const std::list<Type> &ignored)
+{ return type_info(TypePackManager::unpack((const char*)v)); }
+
+std::map<std::string, Type> TypePackManager::map;
 
 int handle_term(Term &term);
 int handle_term_for_fold(int ignored, Term &term) {
@@ -979,7 +1034,10 @@ std::string try_var_term_var_list_elem_translate
 		       "try_var_term_var_list_elem_translate: "
 		       "can only handle base_types");
 		first_half =
-		    std::string(is_decl ? "extern " : "") + type.name + " " + name;
+		    std::string(is_decl ? "extern " : "") +
+		    std::string(TypePackManager::is_type_pack(type.name) ?
+		                "struct " : "") +
+		    type.name + " " + name;
 	}
 	return first_half;
 }
@@ -1633,7 +1691,7 @@ int try_any_to_term(Term &term) {
 		             try_var_term_var_list_elem_translate(type, result_str,
 					                                      false).c_str());
 		try_to_any_term_assignment(value_str, result_str, true,
-		                           type_size(type));
+		                           type_info(type).size);
 		term.metadata.set_type(type);
 		return result_index;
 	}
@@ -1649,7 +1707,7 @@ int try_to_any_term(Term &term) {
 		const int value_index = handle_term(*it);
 		const std::string value_str(make_temp_name(value_index));
 		const Type &type = it->metadata.get_type();
-		const int size = type_size(type);
+		const int size = type_info(type).size;
 		const int result_index = temp_index++;
 		const std::string result_str(make_temp_name(result_index));
 		const std::string type_desc_str = make_type_desc_name
@@ -1662,7 +1720,7 @@ int try_to_any_term(Term &term) {
 			cheme_printf("*%s(&%s) = malloc(%d);\n",
 			             HIDDEN_CHEME_ANY_DPTR_PTR, result_str.c_str(), size);
 		try_to_any_term_assignment(result_str, value_str, false,
-		                           type_size(it->metadata.get_type()));
+		                           type_info(it->metadata.get_type()).size);
 		term.metadata.set_type(build_base_type("any"));
 		return result_index;
 	}
@@ -1719,6 +1777,30 @@ int try_ind_term(Term &term) {
 	return 0;
 }
 
+int try_type_pack_term(Term &term) {
+	if (is_specific_special_form(term, "type_pack")) {
+		ASSERT(term.list.size() == 3, "type_pack should accept two parameters");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		Type type = type_from_term(*it);
+		++it;
+		ASSERT(it->is_single_word(),
+		       "type_pack first parameter should be a word");
+		std::string word = it->single.str;
+		TypePackManager::add(word, type);
+		TypeManager::add_base_type(word, get_packed_type_info, word.c_str());
+		cheme_printf_set_zone(FunctionManager::in_global_scope() ?
+		                      PRINTF_ZONE_TOP : PRINTF_ZONE_CURRENT_BODY);
+		cheme_printf("struct %s { %s; }\n",
+		             word.c_str(),
+		             try_var_term_var_list_elem_translate(type, "data",
+		                                                  false).c_str());
+		cheme_printf_unset_zone();
+		term.metadata.set_type(build_base_type("unit"));
+		return temp_index++;
+	}
+	return 0;
+}
+
 int handle_term(Term &term) {
 	Maybe<Type> type;
 	int used_temp_index = 0;
@@ -1738,6 +1820,7 @@ int handle_term(Term &term) {
 	TRY(try_lambda_term)
 	TRY(try_ref_term)
 	TRY(try_ind_term)
+	TRY(try_type_pack_term)
 	TRY(try_int_term)
 	TRY(try_unit_term)
 	TRY(try_any_is_term)
@@ -1758,7 +1841,8 @@ void print_type_desc(const std::pair<Type, int> &pair) {
 // we need too access to printf for this one
 #undef printf
 	printf("type_desc %s_data = {%d};\n",
-	       make_type_desc_name(pair.second).c_str(), type_size(pair.first));
+	       make_type_desc_name(pair.second).c_str(),
+	       type_info(pair.first).size);
 	printf("type_desc * const %s = &%s_data;\n",
 	       make_type_desc_name(pair.second).c_str(),
 	       make_type_desc_name(pair.second).c_str());
