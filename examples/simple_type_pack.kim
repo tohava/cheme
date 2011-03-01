@@ -1,4 +1,28 @@
+(decl ((func int int) putchar))
 (type_pack int celsius)
 (type_pack int farenheit)
-(var (celsius c) (farenheit f))
-(+ c f)
+(var (celsius c) 
+	 (farenheit f)
+	 ((func any any celsius) addc 
+	  (lambda ((any x) (any y))
+		(var ((func any int) to_celsius_int 
+			  (lambda ((any x))
+				(if (any_is celsius x) 
+					(unpack (any_to celsius x)) 
+					(if (any_is farenheit x)
+						(div (* 5 (- (unpack (any_to farenheit x)) 32)) 9)
+						0)))))
+		(var (int x2 (to_celsius_int x)))
+		(var (int y2 (to_celsius_int y)))
+		(pack celsius (+ x2 y2)))))
+(putchar (if (== 
+			  (unpack (addc (to_any (pack celsius 30)) 
+			  		  		(to_any (pack farenheit 40))))
+			  34) 49 48))
+	
+	 
+	 
+	 
+								 
+	 		 
+

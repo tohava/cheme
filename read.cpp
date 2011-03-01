@@ -22,6 +22,7 @@
 #define HIDDEN_CHEME_DOUBLE_TO_INT "hidden_cheme_double_to_int"
 #define HIDDEN_CHEME_ADD_INTS      "hidden_cheme_add_ints"
 #define HIDDEN_CHEME_SUB_INTS      "hidden_cheme_sub_ints"
+#define HIDDEN_CHEME_MUL_INTS      "hidden_cheme_mul_ints"
 #define HIDDEN_CHEME_CMP_INTS      "hidden_cheme_cmp_ints"
 #define HIDDEN_CHEME_ANY_SIZE      "hidden_cheme_any_size"
 #define HIDDEN_CHEME_ANY_DPTR_PTR  "hidden_cheme_any_dptr_ptr"
@@ -99,7 +100,9 @@ char word[1000];
 void cheme_printf_empty_stacks_to_stderr();
 
 #define ABORT(x) ASSERT(false,x)
+#define ABORT1(x,y) ASSERT1(false,x,y)
 #define ASSERT(x,y) ((x) || (fputs((y),stderr), fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), cheme_printf_empty_stacks_to_stderr(), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
+#define ASSERT1(x,y,z) ((x) || (fprintf(stderr, (std::string(y) + "\n").c_str(), z), fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), cheme_printf_empty_stacks_to_stderr(), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
 
 typedef struct {
 	char *buf_origin;
@@ -1042,6 +1045,14 @@ std::string try_var_term_var_list_elem_translate
 	return first_half;
 }
 
+void init_any_to_unit(const std::string &s) {
+	cheme_printf("%s.t = %s;\n",
+	             s.c_str(),
+	             make_type_desc_name(
+	                 TypeInstanceManager::add(
+	                     build_base_type("unit"))).c_str());
+}
+
 void try_var_term_var_list(std::list<Term>::iterator it,
                            const std::list<Term>::const_iterator itEnd,
                            const bool is_decl) {
@@ -1074,6 +1085,9 @@ begin:
 				cheme_printf("%s = %s;\n", name.c_str(),
 				             make_temp_name(init_value_temp_index).c_str());
 				cheme_printf_unset_zone();
+			} else {
+				if (same_types(type, build_base_type("any")))
+					init_any_to_unit(name);
 			}
 		}
 		if (!same_types(type, build_base_type("any"))) {
@@ -1195,6 +1209,50 @@ std::string is_app_form(const Term &term) {
 	    term.list.begin()->single.str : "";
 }
 
+void assignment_for_anys(const char *left_str,
+                         const char *right_str) {
+#define MAX_SIZE ANY_SIZE_THRESHOLD		
+	cheme_printf("{\n");
+	cheme_printf("int size1 = %s(&%s);\n",
+	             HIDDEN_CHEME_ANY_SIZE, left_str);
+	cheme_printf("int size2 = %s(&%s);\n",
+	             HIDDEN_CHEME_ANY_SIZE, right_str);
+	cheme_printf("if (size2 > %d) {\n"
+	             "  if (size1 != size2 && size1 > %d) free(%s(&%s));\n"
+	             "  *%s(&%s) = malloc(size2);\n"
+	             "}",
+	             MAX_SIZE, MAX_SIZE, HIDDEN_CHEME_ANY_DPTR, left_str,
+	             HIDDEN_CHEME_ANY_DPTR_PTR, left_str);
+	cheme_printf("else if (size1 >  %d && size2 <= %d) "
+	             "free(%s(&%s));\n",
+	             MAX_SIZE, MAX_SIZE,
+	             HIDDEN_CHEME_ANY_DPTR, left_str);
+	cheme_printf("if      (size2 <= %d) "
+	             "%s = %s;\n",
+	             MAX_SIZE, left_str, right_str);
+	cheme_printf("else if (size2 >  %d) {"
+	             "*%s(&%s) = *%s(&%s);\n"
+	             "memcpy(%s(&%s),%s(&%s),size2);\n}\n",
+	             MAX_SIZE, HIDDEN_CHEME_ANY_TYPE_PTR, left_str,
+	             HIDDEN_CHEME_ANY_TYPE_PTR, right_str,
+	             HIDDEN_CHEME_ANY_DPTR_PTR, left_str,
+	             HIDDEN_CHEME_ANY_DPTR_PTR, right_str);
+	cheme_printf("}\n");
+#undef MAX_SIZE 
+	
+}						 
+
+int try_app_term_params_any_dup(int middle_index) {
+	int result_index = temp_index++;
+	std::string s = try_var_term_var_list_elem_translate
+	    (build_base_type("any"), make_temp_name(result_index), false);
+	cheme_printf("%s;\n", s.c_str());
+	init_any_to_unit(make_temp_name(result_index));
+	assignment_for_anys(make_temp_name(result_index).c_str(),
+	                    make_temp_name(middle_index).c_str());
+	return result_index;
+}
+
 std::list<int> try_app_term_params
     (std::list<Type>::const_iterator itType,
      const std::list<Type>::const_iterator itTypeEnd,
@@ -1207,9 +1265,10 @@ begin:
 	    ((itType == itTypeEnd) ? 1 : 0) + ((itTerm == itTermEnd) ? 1 : 0);
 	ASSERT(at_end % 2 == 0, "try_app_term_params: arity mismatch");
 	if (!at_end) {
-		ret.push_back(handle_term(*itTerm));
-		ASSERT(!same_types(itTerm->metadata.get_type(), build_base_type("any")),
-		       "Any type in function calls is not yet supported (by-value)");
+		int middle_index = handle_term(*itTerm);
+		int result_index = same_types(*itType, build_base_type("any")) ?
+		    try_app_term_params_any_dup(middle_index) : middle_index; 
+		ret.push_back(result_index);
 		ASSERT(same_types(itTerm->metadata.get_type(), *itType),
 		       "Expected type of application argument does not match inferred");
 		++itType; ++itTerm;
@@ -1283,7 +1342,7 @@ int try_unit_term(Term &term) {
 		return try_unit_term_unitv_var();
 	}
 	return 0;
-}
+}						 
 
 int try_set_term(Term &term) {
 	if (is_specific_special_form(term, "<-")) {
@@ -1302,35 +1361,9 @@ int try_set_term(Term &term) {
 #define LEFT_STR (make_temp_name(ptr_temp_index).c_str())
 #define RIGHT_STR (make_temp_name(value_temp_index).c_str())
 		if (same_types(itype, build_base_type("any")))
-		{
-#define MAX_SIZE ANY_SIZE_THRESHOLD		
-			cheme_printf("{\n");
-			cheme_printf("size_t size1 = %s(%s);\n",
-			             HIDDEN_CHEME_ANY_SIZE, LEFT_STR);
-			cheme_printf("size_t size2 = %s(&%s);\n",
-			             HIDDEN_CHEME_ANY_SIZE, RIGHT_STR);
-			cheme_printf("if      (size1 <= %d && size2 >  %d) "
-			             "*%s(%s) = malloc(size2);\n",
-			             MAX_SIZE, MAX_SIZE,
-			             HIDDEN_CHEME_ANY_DPTR_PTR, LEFT_STR);
-			cheme_printf("else if (size1 >  %d && size2 <= %d) "
-			             "free(%s(%s));\n",
-			             MAX_SIZE, MAX_SIZE,
-			             HIDDEN_CHEME_ANY_DPTR, LEFT_STR);
-			cheme_printf("if      (size2 <= %d) "
-			             "*%s = %s;\n",
-			             MAX_SIZE, LEFT_STR, RIGHT_STR);
-			cheme_printf("else if (size2 >  %d) {"
-			             "*%s(%s) = *%s(&%s);\n"
-			             "memcpy(%s(%s),%s(&%s));\n}\n",
-			             MAX_SIZE, HIDDEN_CHEME_ANY_TYPE_PTR, LEFT_STR,
-			             HIDDEN_CHEME_ANY_TYPE_PTR, RIGHT_STR,
-			             HIDDEN_CHEME_ANY_DPTR_PTR, LEFT_STR,
-			             HIDDEN_CHEME_ANY_DPTR_PTR, RIGHT_STR);
-#undef MAX_SIZE 
-		} else {
+			assignment_for_anys(LEFT_STR, RIGHT_STR);
+		else
 			cheme_printf("*%s = %s;\n", LEFT_STR, RIGHT_STR);
-		}
 #undef RIGHT_STR
 #undef LEFT_STR
 		cheme_printf_unset_zone();
@@ -1790,13 +1823,59 @@ int try_type_pack_term(Term &term) {
 		TypeManager::add_base_type(word, get_packed_type_info, word.c_str());
 		cheme_printf_set_zone(FunctionManager::in_global_scope() ?
 		                      PRINTF_ZONE_TOP : PRINTF_ZONE_CURRENT_BODY);
-		cheme_printf("struct %s { %s; }\n",
+		cheme_printf("struct %s { %s; };\n",
 		             word.c_str(),
 		             try_var_term_var_list_elem_translate(type, "data",
 		                                                  false).c_str());
 		cheme_printf_unset_zone();
 		term.metadata.set_type(build_base_type("unit"));
 		return temp_index++;
+	}
+	return 0;
+}
+
+int try_pack_term(Term &term) {
+	if (is_specific_special_form(term, "pack")) {
+		ASSERT(term.list.size() == 3, "pack should accept two parameters");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		ASSERT(it->is_single_word(),
+		       "pack first parameter should be a word");
+		std::string word = it->single.str; ++it;
+		ASSERT(TypePackManager::is_type_pack(word),
+		       "pack first parameter should be the name of a type pack");
+		const Type t = build_base_type(word);
+		int value_index = handle_term(*it);
+		int result_index = temp_index++;
+		std::string value_str = make_temp_name(value_index);
+		std::string result_str = make_temp_name(result_index);
+		cheme_printf("%s = {%s};\n",
+		             try_var_term_var_list_elem_translate(t, result_str,
+		                                                  false).c_str(),
+		             value_str.c_str());
+		term.metadata.set_type(t);
+		return result_index;
+	}
+	return 0;
+}
+
+int try_unpack_term(Term &term) {
+	if (is_specific_special_form(term, "unpack")) {
+		ASSERT(term.list.size() == 2,
+		       "unpack should accept a single parameter");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		int value_index = handle_term(*it);
+		int result_index = temp_index++;
+		std::string value_str = make_temp_name(value_index);
+		std::string result_str = make_temp_name(result_index);
+		Type t = it->metadata.get_type();
+		Type t2 = TypePackManager::unpack(t.name);
+		ASSERT(t.type_params.empty(),
+		       "unpack term should not be parametric");
+		std::string s = try_var_term_var_list_elem_translate(t2, result_str,
+		                                                     false);
+		cheme_printf("%s = %s.data;\n", s.c_str(), value_str.c_str());
+		term.metadata.set_type(t2);
+		return result_index;
 	}
 	return 0;
 }
@@ -1821,6 +1900,8 @@ int handle_term(Term &term) {
 	TRY(try_ref_term)
 	TRY(try_ind_term)
 	TRY(try_type_pack_term)
+	TRY(try_pack_term)
+	TRY(try_unpack_term)
 	TRY(try_int_term)
 	TRY(try_unit_term)
 	TRY(try_any_is_term)
@@ -1830,7 +1911,19 @@ int handle_term(Term &term) {
 	TRY(try_var_ref_term)
 	ELSE
 	{
-		ABORT("Expected: special form or application form of a known callable");
+		std::string str;
+		if (term.type == TERM_TYPE_LIST) {
+			const Term &term2 = *term.list.begin();
+			if (term2.is_single_word()) {
+				str = "(" + term2.single.str + " ...)";
+			} else {
+				str = "(<NON-WORD-TERM> ...)";
+			}
+		} else {
+			str = "<NON-LIST-TERM>";
+		}
+		ABORT1("Expected special form or application form of a known callable, "
+		       "instead got term %s\n", str.c_str());
 	}
 	ASSERT(term.metadata.has_type(), "term without type???");
 	pop_error_context();
@@ -1872,6 +1965,8 @@ void print_header_stuff() {
 	     "{return &a->d;}");
 	puts("static char *     "HIDDEN_CHEME_ANY_SPTR    "(any *a) "
 	     "{return a->s;}");
+	puts("static char *     "HIDDEN_CHEME_ANY_DPTR    "(any *a) "
+	     "{return a->d;}");
 	
 	puts("static int hidden_cheme_any_size(any *a) {return a->t->size;}");
 	puts("static int "HIDDEN_CHEME_LT"(int x, int y) "
@@ -1886,6 +1981,8 @@ void print_header_stuff() {
 	     "{ return x + y; }");
 	puts("static int "HIDDEN_CHEME_SUB_INTS"(int x, int y) "
 	     "{ return x - y; }");
+	puts("static int "HIDDEN_CHEME_MUL_INTS"(int x, int y) "
+	     "{ return x * y; }");
 	puts("static int "HIDDEN_CHEME_CMP_INTS"(int x, int y) "
 	     "{ return x == y; }");
 	puts("static double int2double(int x) { return (double)x; }");
@@ -1922,6 +2019,8 @@ void add_primitives() {
 	                     HIDDEN_CHEME_ADD_INTS, "");
 	FunctionManager::add("-", build_poly_type("func", iii),
 	                     HIDDEN_CHEME_SUB_INTS, "");
+	FunctionManager::add("*", build_poly_type("func", iii),
+	                     HIDDEN_CHEME_MUL_INTS, "");
 	std::list<Type> id;
 	id.push_back(build_base_type("int"));
 	id.push_back(build_base_type("double"));
