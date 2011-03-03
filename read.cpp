@@ -87,6 +87,13 @@ std::string make_type_desc_name(int index) {
 	return std::string(buf);
 }
 
+std::string make_tup_name(int index) {
+	char buf[80];
+	sprintf(buf, "struct hidden_cheme_tup_%08d", index);
+	return std::string(buf);
+}
+
+
 std::string get_next_temp() {
 	return make_temp_name(temp_index++);
 }
@@ -679,6 +686,13 @@ const A &pair_first(const std::pair<A,B> &pair) { return pair.first; }
 template <int V, class T>
 int fixed_value(const T &) { return V; }
 
+template <class T>
+const T &list_at(const std::list<T> &l, int index) {
+	typename std::list<T>::const_iterator i = l.begin();
+	while(index--) ++i;
+	return *i;
+}
+
 
 class FunctionManager {
 private:
@@ -794,6 +808,7 @@ TypeInfo get_func_type_info(const void *v, const std::list<Type> &ignored)
 { TypeInfo t; t.size = sizeof(void(*)()); return t; }
 TypeInfo get_ptr_type_info(const void *v, const std::list<Type> &ignored)
 { TypeInfo t; t.size = sizeof(void*); return t; }
+TypeInfo get_tup_type_info(const void *ignored, const std::list<Type> &t);
 TypeInfo get_packed_type_info(const void *v, const std::list<Type> &ignored);
 
 
@@ -811,12 +826,12 @@ public:
 		BTI(std::make_pair("any",   NP(get_cheme_any_type_info)));
 #undef BTI
 		// we hope all funcptrs have same size
-		poly_types.insert(std::make_pair
-		                      ("func", std::make_pair(-1,
-		                                              NP(get_func_type_info))));
-		poly_types.insert(std::make_pair
-		                      ("ptr", std::make_pair(1,
-		                                             NP(get_ptr_type_info))));
+#define PTI(name,arity,func) \
+poly_types.insert(std::make_pair(name, std::make_pair(arity, NP(func))))
+		PTI("func", -1, get_func_type_info);
+		PTI("tup", -1, get_tup_type_info);
+		PTI("ptr", 1, get_ptr_type_info);
+#undef PTI
 #undef NP
 	}
 	static void add_base_type(const std::string &str,
@@ -924,12 +939,22 @@ Type type_from_term(const Term &term) {
 	if (term.type == TERM_TYPE_SINGLE) {
 		ASSERT(term.single.type == TOKEN_TYPE_WORD,
 		       "type_from_term: base type name must be a word");
+		ASSERT(TypeManager::is_base_type(term.single.str),
+		       "type_from_term: unknown base type");
 		ret.name = term.single.str;
 	} else {
 		ASSERT(!term.list.empty(),
 		        "type_from_term: Found empty list where type should be");
 		ASSERT(term.list.begin()->is_single_word(),
 		       "type_from_term: poly type name must be a word");
+		const std::string &name = term.list.begin()->single.str;
+		ASSERT1(TypeManager::is_poly_type(name),
+		        "type_from_term: unknown poly type %s", name.c_str());
+		ASSERT1(((int)term.list.size() - 1 ==
+		         TypeManager::poly_type_arity(name)) ||
+		        TypeManager::poly_type_arity(name) == -1,
+		        "type_from_term: bad arity for poly type parameters of %s",
+		        name.c_str());
 		ret.name = term.list.begin()->single.str;
 		std::list<Term>::const_iterator it = term.list.begin(); ++it;
 		for ( ; it != term.list.end(); ++it)
@@ -960,6 +985,21 @@ public:
 private:
 	static std::map<std::string, Type> map;
 };
+
+TypeInfo get_tup_type_info(const void *ignored, const std::list<Type> &t)
+{
+	TypeInfo i;
+	i.size = 0;
+	int maxsize = 0;
+	for (std::list<Type>::const_iterator it = t.begin(); it != t.end(); ++it) {
+		const int size = type_info(*it).size;
+		if (i.size % size != 0) i.size += size - (i.size % size);
+		i.size += size;
+		maxsize = size > maxsize ? size : maxsize;
+	}
+	if (i.size % maxsize != 0) i.size += maxsize - (i.size % maxsize);	
+	return i;
+}
 
 TypeInfo get_packed_type_info(const void *v, const std::list<Type> &ignored)
 { return type_info(TypePackManager::unpack((const char*)v)); }
@@ -1002,14 +1042,21 @@ std::string word_from_term(const Term &term) {
 }
 
 
-
+std::string try_var_term_var_list_elem_translate_basic
+    (const bool is_decl,
+     const std::string &tname,
+     const std::string &name)
+{
+	return (std::string(is_decl ? "extern " : "") +
+	        tname + " " + name);
+}
 
 std::string try_var_term_var_list_elem_translate
     (const Type &type,
      const std::string &name,
      const bool is_decl)
 {
-	std::string first_half;
+#define BASIC try_var_term_var_list_elem_translate_basic
 	if (type.name == "func") {
 		ASSERT(TypeManager::is_poly_type(type.name),
 		       "func is not really func?");
@@ -1028,21 +1075,22 @@ std::string try_var_term_var_list_elem_translate
 		ret = (try_var_term_var_list_elem_translate(*itRet, "", false) +
 		       " " +
 		       (is_decl ? "" : "(*") + name + (is_decl ? "" : ")"));
-		first_half = ret + params + "";
+		return ret + params + "";
 	} else if (type.name == "ptr") {
 		return try_var_term_var_list_elem_translate(*type.type_params.begin(),
 		                                            "*" + name, is_decl);
+	} else if (type.name == "tup") {
+		return try_var_term_var_list_elem_translate_basic
+		    (is_decl, make_tup_name(TypeInstanceManager::add(type)), name);
+	} else if (TypePackManager::is_type_pack(type.name)) {
+		return try_var_term_var_list_elem_translate_basic
+		    (is_decl, "struct " + type.name, name);
 	} else {
 		ASSERT(type.type_params.empty(),
-		       "try_var_term_var_list_elem_translate: "
-		       "can only handle base_types");
-		first_half =
-		    std::string(is_decl ? "extern " : "") +
-		    std::string(TypePackManager::is_type_pack(type.name) ?
-		                "struct " : "") +
-		    type.name + " " + name;
+		       "try_var_term_var_list_elem_translate: unknown type");
+		return try_var_term_var_list_elem_translate_basic
+		    (is_decl, type.name, name);
 	}
-	return first_half;
 }
 
 void init_any_to_unit(const std::string &s) {
@@ -1880,6 +1928,63 @@ int try_unpack_term(Term &term) {
 	return 0;
 }
 
+int try_at_term(Term &term) {
+	if (is_specific_special_form(term, "at")) {
+		ASSERT(term.list.size() == 3, "at should accept 2 parameters");
+		std::list<Term>::iterator it = term.list.begin(); 
+		int value_index = handle_term(*++it);
+		Type value_type = it->metadata.get_type();
+		ASSERT1(value_type.name == "tup" && value_type.type_params.size() > 0,
+		        "1st parameter of at should be (tup ...), not %s",
+		        type_to_string(value_type).c_str());
+		ASSERT((++it)->is_single_int(),
+		       "2nd parameter of at must be an int literal");
+		int index = it->single.num;
+		ASSERT1(index < (int)value_type.type_params.size(),
+		        "at index is too big (should be less than %d)",
+		        (int)value_type.type_params.size());
+		ASSERT(index >= 0, "at index should be non-negative");
+		Type result_type = list_at(value_type.type_params, index);
+		int result_index = temp_index++;
+		std::string s = try_var_term_var_list_elem_translate
+		    (result_type, make_temp_name(result_index).c_str(), false);
+		cheme_printf("%s = %s.elem%d;\n",
+		             s.c_str(), make_temp_name(value_index).c_str(), index);
+		term.metadata.set_type(result_type);
+		return result_index;
+	}
+	return 0;
+}
+
+bool print_value_index_with_comma(bool is_first, const int value_index) {
+	cheme_printf("%c%s",
+	             is_first ? ' ' : ',', make_temp_name(value_index).c_str());
+	return false;
+}
+
+int try_tupv_term(Term &term) {
+	if (is_specific_special_form(term, "tupv")) {
+		ASSERT(term.list.size() > 1, "tupv without parameters");
+		std::list<Term>::iterator it = term.list.begin();
+		std::list<int> value_indices;
+		std::list<Type> types;
+		while (++it != term.list.end()) {
+			value_indices.push_back(handle_term(*it));
+			types.push_back(it->metadata.get_type());
+		}
+		int result_index = temp_index++;
+		Type result_type = build_poly_type("tup", types);
+		std::string s = try_var_term_var_list_elem_translate
+		    (result_type, make_temp_name(result_index).c_str(), false);
+		cheme_printf("%s = {", s.c_str());
+		foldl(print_value_index_with_comma, true, value_indices);
+		cheme_printf("};");
+		term.metadata.set_type(result_type);
+		return result_index;
+	}
+	return 0;
+}
+
 int handle_term(Term &term) {
 	Maybe<Type> type;
 	int used_temp_index = 0;
@@ -1907,6 +2012,8 @@ int handle_term(Term &term) {
 	TRY(try_any_is_term)
 	TRY(try_any_to_term)
 	TRY(try_to_any_term)
+	TRY(try_at_term)
+	TRY(try_tupv_term)
 	TRY(try_app_term)
 	TRY(try_var_ref_term)
 	ELSE
@@ -1930,9 +2037,9 @@ int handle_term(Term &term) {
 	return used_temp_index;
 }
 
+#undef printf
 void print_type_desc(const std::pair<Type, int> &pair) {
 // we need too access to printf for this one
-#undef printf
 	printf("type_desc %s_data = {%d};\n",
 	       make_type_desc_name(pair.second).c_str(),
 	       type_info(pair.first).size);
@@ -1940,14 +2047,35 @@ void print_type_desc(const std::pair<Type, int> &pair) {
 	       make_type_desc_name(pair.second).c_str(),
 	       make_type_desc_name(pair.second).c_str());
 	       
-#define printf DO NOT USE THIS
 }
+
+void print_tup_structs() {
+	std::list< std::pair<Type, int> > list = TypeInstanceManager::all();
+	std::list< std::pair<Type, int> >::iterator it = list.begin();
+	for (; it != list.end(); ++it) {
+		if (it->first.name == "tup") {
+			printf("%s {\n", make_tup_name(it->second).c_str());
+			std::list<Type>::const_iterator it2 = it->first.type_params.begin();
+			int index = 0;
+			for (; it2 != it->first.type_params.end(); ++it2, ++index) {
+				char buf[32];
+				sprintf(buf, "elem%d", index);
+				printf("%s;\n",
+				       try_var_term_var_list_elem_translate(*it2, buf,
+				                                            false).c_str());
+			}
+			printf("};\n");
+		}
+	}
+}
+#define printf DO NOT USE THIS
 
 void print_type_descs() {
 	std::list< std::pair<Type, int> > desc_pairs = TypeInstanceManager::all();
 	std::for_each(desc_pairs.begin(), desc_pairs.end(),
 	              print_type_desc);
 }
+
 
 void print_header_stuff() {
 	puts("void abort(void); void *malloc(long size); void free(void *ptr);\n");
@@ -1988,6 +2116,7 @@ void print_header_stuff() {
 	puts("static double int2double(int x) { return (double)x; }");
 	puts("static int double2int(double x) { return (int)x; }");
 	print_type_descs();
+	print_tup_structs();
 }
 
 void print_main_header_stuff() {

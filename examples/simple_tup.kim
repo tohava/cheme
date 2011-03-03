@@ -1,0 +1,20 @@
+(decl ((func double double) sqrt))
+(decl ((func int int) putchar))
+
+(var ((func (tup int int int) (tup int int)) solve_square_roots
+	  (lambda (((tup int int int) abc))
+		(var ((func (tup int int int) int int) sol
+			  (lambda (((tup int int int) abc) 
+					   (int fac))
+				(var (int a (at abc 0)) (int b (at abc 1)) (int c (at abc 2)))
+				(div 
+				 (+ (- 0 b) (* fac (double2int 
+									(sqrt 
+									 (int2double (- (* b b) (* 4 (* a c))))))))
+				 (* 2 a)))))
+		(tupv (sol abc (+ 0 1)) (sol abc (- 0 1))))))
+(var ((tup int int) roots (solve_square_roots (tupv 1 (- 0 10) 24))))
+(putchar (if (and (== (at roots 0) 6)
+				  (== (at roots 1) 4))
+			 49
+			 48))
