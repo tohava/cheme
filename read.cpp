@@ -939,8 +939,9 @@ Type type_from_term(const Term &term) {
 	if (term.type == TERM_TYPE_SINGLE) {
 		ASSERT(term.single.type == TOKEN_TYPE_WORD,
 		       "type_from_term: base type name must be a word");
-		ASSERT(TypeManager::is_base_type(term.single.str),
-		       "type_from_term: unknown base type");
+		ASSERT1(TypeManager::is_base_type(term.single.str),
+		        "type_from_term: unknown base type %s",
+		        term.single.str.c_str());
 		ret.name = term.single.str;
 	} else {
 		ASSERT(!term.list.empty(),
@@ -965,25 +966,40 @@ Type type_from_term(const Term &term) {
 
 class TypePackManager {
 public:
+	static void add(const std::string &str) {
+		std::map<std::string, Maybe<Type> >::iterator it = map.find(str);
+		ASSERT(it == map.end(), "TypePackManager::add/1 - already there");
+		map.insert(std::make_pair(str, Maybe<Type>()));
+	}
 	static void add(const std::string &str, const Type &type) {
-		map.insert(std::make_pair(str, type));
+		std::map<std::string, Maybe<Type> >::iterator it = map.find(str);
+		if (it == map.end())
+			map.insert(std::make_pair(str, Maybe<Type>(type)));
+		else {
+			ASSERT(!it->second.is_valid(),
+			       "TypePackManager::add/2 - already there");
+			it->second = Maybe<Type>(type);
+		}
 	}
 	static bool is_type_pack(const std::string &str) {
+		return map.find(str) != map.end();
+	}
+	static bool is_defined_type_pack(const std::string &str) {
 		return try_unpack(str) != NULL;
 	}
 	static const Type *try_unpack(const std::string &str) {
-		std::map<std::string, Type>::const_iterator it = map.find(str);
-		return (it == map.end()) ? NULL : &it->second;
-		ASSERT(it != map.end(), "TypePackManager::unpack - unknown type");
-		return &it->second;
+		std::map<std::string, Maybe<Type> >::const_iterator it = map.find(str);
+		return (it == map.end() || !it->second.is_valid()) ?
+		    NULL : &it->second.get_data();
 	}
 	static const Type &unpack(const std::string &str) {
 		const Type *p = try_unpack(str);
-		ASSERT(p != NULL, "TypePackManager::unpack - unknown type");
+		ASSERT1(p != NULL, "TypePackManager::unpack - unknown type %s",
+		        str.c_str());
 		return *p;
 	}
 private:
-	static std::map<std::string, Type> map;
+	static std::map<std::string, Maybe<Type> > map;
 };
 
 TypeInfo get_tup_type_info(const void *ignored, const std::list<Type> &t)
@@ -1004,7 +1020,7 @@ TypeInfo get_tup_type_info(const void *ignored, const std::list<Type> &t)
 TypeInfo get_packed_type_info(const void *v, const std::list<Type> &ignored)
 { return type_info(TypePackManager::unpack((const char*)v)); }
 
-std::map<std::string, Type> TypePackManager::map;
+std::map<std::string, Maybe<Type> > TypePackManager::map;
 
 int handle_term(Term &term);
 int handle_term_for_fold(int ignored, Term &term) {
@@ -1109,9 +1125,11 @@ begin:
 		return;
 	else {
 		Term &term = *it;
+		push_error_context(term.ec);
 		ASSERT(term.type == TERM_TYPE_LIST &&
 		       2 <= term.list.size() && term.list.size() <= (is_decl ? 2 : 3),
 		       "Invalid variable format");
+		pop_error_context();
 		std::string name = try_var_term_var_list_elem_name(term.list);
 		Type type = try_var_term_var_list_elem_type(term.list);
 		const std::pair<int, Type> init_val_index_and_type =
@@ -1861,18 +1879,19 @@ int try_ind_term(Term &term) {
 int try_type_pack_term(Term &term) {
 	if (is_specific_special_form(term, "type_pack")) {
 		ASSERT(term.list.size() == 3, "type_pack should accept two parameters");
-		std::list<Term>::iterator it = term.list.begin(); ++it;
-		Type type = type_from_term(*it);
-		++it;
+		std::list<Term>::iterator it = term.list.begin();
+		++it; ++it;
 		ASSERT(it->is_single_word(),
-		       "type_pack first parameter should be a word");
-		std::string word = it->single.str;
-		TypePackManager::add(word, type);
-		TypeManager::add_base_type(word, get_packed_type_info, word.c_str());
+		       "type_pack second parameter should be a word");
+		std::string name = it->single.str; --it;
+		TypeManager::add_base_type(name, get_packed_type_info, strdup(name.c_str()));
+		TypePackManager::add(name);
+		Type type = type_from_term(*it);
+		TypePackManager::add(name, type);
 		cheme_printf_set_zone(FunctionManager::in_global_scope() ?
 		                      PRINTF_ZONE_TOP : PRINTF_ZONE_CURRENT_BODY);
 		cheme_printf("struct %s { %s; };\n",
-		             word.c_str(),
+		             name.c_str(),
 		             try_var_term_var_list_elem_translate(type, "data",
 		                                                  false).c_str());
 		cheme_printf_unset_zone();
@@ -1888,10 +1907,10 @@ int try_pack_term(Term &term) {
 		std::list<Term>::iterator it = term.list.begin(); ++it;
 		ASSERT(it->is_single_word(),
 		       "pack first parameter should be a word");
-		std::string word = it->single.str; ++it;
-		ASSERT(TypePackManager::is_type_pack(word),
+		std::string name = it->single.str; ++it;
+		ASSERT(TypePackManager::is_defined_type_pack(name),
 		       "pack first parameter should be the name of a type pack");
-		const Type t = build_base_type(word);
+		const Type t = build_base_type(name);
 		int value_index = handle_term(*it);
 		int result_index = temp_index++;
 		std::string value_str = make_temp_name(value_index);
@@ -1985,6 +2004,28 @@ int try_tupv_term(Term &term) {
 	return 0;
 }
 
+int try_ptr_add_term(Term &term) {
+	if (is_specific_special_form(term, "ptr_add")) {
+		ASSERT(term.list.size() == 3, "ptr_add should get two parameters");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		int value_index = handle_term(*it); ++it;
+		Type type = it->metadata.get_type();
+		ASSERT(type.name == "ptr", "ptr_add 1st parameter must be a pointer");
+		int offset_index = handle_term(*it);
+		ASSERT(same_types(it->metadata.get_type(), build_base_type("int")),
+		       "ptr_add 2nd parameter must be an int");
+		int result_index = temp_index++;	   
+		std::string s = try_var_term_var_list_elem_translate
+		    (type, make_temp_name(result_index).c_str(), false);
+		cheme_printf("%s = %s + %s;", s.c_str(),
+		             make_temp_name(value_index).c_str(),
+		             make_temp_name(offset_index).c_str());
+		term.metadata.set_type(type);
+		return result_index;
+	}
+	return 0;
+}
+
 int handle_term(Term &term) {
 	Maybe<Type> type;
 	int used_temp_index = 0;
@@ -2014,6 +2055,7 @@ int handle_term(Term &term) {
 	TRY(try_to_any_term)
 	TRY(try_at_term)
 	TRY(try_tupv_term)
+	TRY(try_ptr_add_term)
 	TRY(try_app_term)
 	TRY(try_var_ref_term)
 	ELSE
@@ -2158,6 +2200,11 @@ void add_primitives() {
 	di.push_back(build_base_type("double"));
 	di.push_back(build_base_type("int"));
 	FunctionManager::add_simple("double2int", build_poly_type("func", di));
+	std::list<Type> ccb;
+	ccb.push_back(build_base_type("char"));
+	ccb.push_back(build_base_type("char"));
+	ccb.push_back(build_base_type("bool"));
+	FunctionManager::add_simple("char_eq", build_poly_type("func", ccb));
 }
 
 int main() {
