@@ -7,7 +7,9 @@ int yylex();
 #define CLOSE 2
 #define NUMBER 3
 #define WORD 4
-#define SPACE 5
+#define STRING 5
+#define SPACE 6
+#define CHAR 7
 #define UNKNOWN -1
 
 extern char word[1000];

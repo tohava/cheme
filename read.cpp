@@ -43,11 +43,11 @@
      typedef struct {} cheme_unit;
 #define SS1 ANY_SIZE_THRESHOLD_STR
 #define SS2 ANY_SIZE_THRESHOLD
-struct cheme_type_desc;
+struct cheme_type_desc_data;
 #define CHEME_TYPE_ANY_STR \
-    "typedef struct { type_desc *t;       char s["SS1"]; char *d; } any;"
-     typedef struct { cheme_type_desc *t; char s[ SS2 ]; char *d; } cheme_any;
-	 
+    "typedef struct { hidden_cheme_type_desc_data *t;  char s["SS1"]; char *d; } any;"
+     typedef struct { cheme_type_desc_data *t; char s[ SS2 ]; char *d; } cheme_any;
+typedef cheme_type_desc_data *cheme_type_desc;
 
 struct ErrorContext {
 	long pos;
@@ -81,9 +81,9 @@ std::string make_temp_name(int temp_index) {
 	return std::string(buf);
 }
 
-std::string make_type_desc_name(int index) {
+std::string make_type_desc_data_name(int index) {
 	char buf[80];
-	sprintf(buf, "hidden_cheme_type_desc%08d", index);
+	sprintf(buf, "hidden_cheme_type_desc_data%08d", index);
 	return std::string(buf);
 }
 
@@ -109,7 +109,9 @@ void cheme_printf_empty_stacks_to_stderr();
 #define ABORT(x) ASSERT(false,x)
 #define ABORT1(x,y) ASSERT1(false,x,y)
 #define ASSERT(x,y) ((x) || (fputs((y),stderr), fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), cheme_printf_empty_stacks_to_stderr(), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
-#define ASSERT1(x,y,z) ((x) || (fprintf(stderr, (std::string(y) + "\n").c_str(), z), fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), cheme_printf_empty_stacks_to_stderr(), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
+#define ASSERT1(x,y,z) ((x) || (fprintf(stderr, (std::string(y) + "\n").c_str(), z), ASSERT_EPILOGUE
+#define ASSERT2(x,y,a,b) ((x) || (fprintf(stderr, (std::string(y) + "\n").c_str(), a, b), ASSERT_EPILOGUE
+#define ASSERT_EPILOGUE fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), cheme_printf_empty_stacks_to_stderr(), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
 
 typedef struct {
 	char *buf_origin;
@@ -178,7 +180,7 @@ int cheme_vprintf_to_context(cheme_printf_context &cur, const char *format,
 		va_list old_argp; va_copy(old_argp, argp);
 		written = vsnprintf(cur.buf_ptr, max_write, format, argp);
 		va_copy(argp, old_argp);
-		if (written == max_write) {
+		if (written >= max_write) {
 			ptrdiff_t buf_offset = cur.buf_ptr - cur.buf_origin;
 			cur.buf_origin = (char*)realloc(cur.buf_origin,
 			                                cur.buf_size * 2);
@@ -338,6 +340,8 @@ std::string type_to_string(const Type &type) {
 #define TOKEN_TYPE_CLOSE  2
 #define TOKEN_TYPE_INT    3
 #define TOKEN_TYPE_WORD   4
+#define TOKEN_TYPE_STRING 5
+#define TOKEN_TYPE_CHAR   6
 	
 struct Token {
 	int type;
@@ -410,6 +414,20 @@ Token parse_word_to_token(const std::string &str) {
 	return tok;
 }
 
+Token parse_string_to_token(const std::string &str) {
+	Token tok;
+	tok.type = TOKEN_TYPE_STRING;
+	tok.str = str;
+	return tok;
+}
+
+Token parse_char_to_token(const std::string &str) {
+	Token tok;
+	tok.type = TOKEN_TYPE_CHAR;
+	tok.str = str;
+	return tok;
+}
+
 Term parse_word_to_term(const std::string &str) {
 	Term term;
 	term.type = TERM_TYPE_SINGLE;
@@ -427,6 +445,8 @@ Token read_token_for_real(FILE *f) {
 	case CLOSE: return make_close_token();
 	case NUMBER: return parse_int_to_token(num);
 	case WORD: return parse_word_to_token(word);
+	case STRING: return parse_string_to_token(word);
+	case CHAR: return parse_char_to_token(word);
 	case SPACE: goto start;
 	case UNKNOWN: fprintf(stderr, "Unknown token %s\n", word); ABORT("");
 	default: ABORT("");
@@ -473,10 +493,9 @@ Term read_term(FILE *f, int index) {
 //	printf("read_term: got token with type %d\n", tok.type);
 	switch (tok.type) {
 	case TOKEN_TYPE_INT:
-		ret.type = TERM_TYPE_SINGLE;
-		ret.single = tok;
-		break;
 	case TOKEN_TYPE_WORD:
+	case TOKEN_TYPE_STRING:
+	case TOKEN_TYPE_CHAR:	
 		ret.type = TERM_TYPE_SINGLE;
 		ret.single = tok;
 		break;
@@ -496,9 +515,10 @@ Term read_term(FILE *f, int index) {
 		break;
 	}
 	default:
-		fprintf(stderr,
-		        "read_term: expected ( or a simple term, "
-		        "instead got token type %d\n", tok.type); ABORT("");
+		push_error_context(current_error_context);
+		ABORT1("read_term: expected ( or a simple term, "
+		       "instead got token type %d\n", tok.type);
+		pop_error_context();
 	}
 	ret.index = index;
 	return ret;
@@ -702,6 +722,7 @@ private:
 		int scope_depth;
 		int lambda_depth;
 		std::string true_name;
+		bool is_c_func;
 	};
 	typedef std::map<std::string, std::list<FunctionData> > map_t;
 	typedef std::list< std::pair< std::string, std::list<map_t::iterator> > >
@@ -711,7 +732,8 @@ public:
 	{
 		FunctionData *p = get(name);
 		return p != NULL && (p->lambda_depth == 0 ||
-		                     p->lambda_depth == lambda_depth);
+		                     p->lambda_depth == lambda_depth ||
+		                     p->is_c_func);
 	}
 	
 	static const Type &type(const std::string &name) {
@@ -726,11 +748,12 @@ public:
 	}
 	static void add_simple(const std::string &name, const Type &newtype)
 	{
-		add(name, newtype, name, "");
+		add(name, newtype, name, "", false);
 	}
 	static void add(const std::string &name, const Type &newtype,
 	                const std::string &true_name,
-	                const std::string &dtor_str)
+	                const std::string &dtor_str,
+	                const bool is_c_func)
 	{
 		map_t::iterator it = map.insert
 		    (std::make_pair(name, std::list<FunctionData>())).first;
@@ -747,6 +770,7 @@ public:
 		list.back().scope_depth = cur_scope_depth();
 		list.back().lambda_depth = lambda_depth;
 		list.back().true_name = true_name;
+		list.back().is_c_func = is_c_func;
 		scope.back().second.push_back(it);
 		scope.back().first += dtor_str;
 	}
@@ -804,6 +828,7 @@ SIMPLE_TYPEINFO_GETTER(cheme_bool)
 SIMPLE_TYPEINFO_GETTER(cheme_unit)
 SIMPLE_TYPEINFO_GETTER(double)
 SIMPLE_TYPEINFO_GETTER(cheme_any)
+SIMPLE_TYPEINFO_GETTER(cheme_type_desc)
 TypeInfo get_func_type_info(const void *v, const std::list<Type> &ignored)
 { TypeInfo t; t.size = sizeof(void(*)()); return t; }
 TypeInfo get_ptr_type_info(const void *v, const std::list<Type> &ignored)
@@ -824,6 +849,7 @@ public:
 		BTI(std::make_pair("unit",  NP(get_cheme_unit_type_info)));
 		BTI(std::make_pair("double",NP(get_double_type_info)));
 		BTI(std::make_pair("any",   NP(get_cheme_any_type_info)));
+		BTI(std::make_pair("type_desc", NP(get_cheme_type_desc_type_info)));
 #undef BTI
 		// we hope all funcptrs have same size
 #define PTI(name,arity,func) \
@@ -1112,7 +1138,7 @@ std::string try_var_term_var_list_elem_translate
 void init_any_to_unit(const std::string &s) {
 	cheme_printf("%s.t = %s;\n",
 	             s.c_str(),
-	             make_type_desc_name(
+	             make_type_desc_data_name(
 	                 TypeInstanceManager::add(
 	                     build_base_type("unit"))).c_str());
 }
@@ -1140,8 +1166,9 @@ begin:
 		       "Variable initialization should use same type");
 		std::string translation = try_var_term_var_list_elem_translate
 		    (type, name, is_decl);
-		if (type.name != "func" || init_value_temp_index == 0)
-		{ // inital lambdas are a special case, they write themselves
+		bool is_c_func = type.name == "func" && init_value_temp_index == -1;
+		if (!is_c_func) {
+			// inital lambdas are a special case, they write themselves
 			cheme_printf_set_zone(FunctionManager::in_global_scope() ?
 			                      PRINTF_ZONE_TOP : PRINTF_ZONE_CURRENT_BODY);
 			cheme_printf("%s;\n",translation.c_str());
@@ -1157,7 +1184,7 @@ begin:
 			}
 		}
 		if (!same_types(type, build_base_type("any"))) {
-			FunctionManager::add_simple(name, type);
+			FunctionManager::add(name, type, name, "", is_c_func);
 		} else {
 			cheme_printf_push();
 			cheme_printf("if (%s(&%s) > %d) free(*%s(&%s));\n",
@@ -1165,7 +1192,7 @@ begin:
 			             ANY_SIZE_THRESHOLD,
 			             HIDDEN_CHEME_ANY_DPTR_PTR, name.c_str());
 			std::auto_ptr<char> p(cheme_printf_pop());
-			FunctionManager::add(name, type, name, std::string(p.get()));
+			FunctionManager::add(name, type, name, std::string(p.get()), false);
 		}
 //		printf("Var %s Type %s\n", name.c_str(), type_to_string(type).c_str());
 		++it;
@@ -1335,8 +1362,10 @@ begin:
 		int result_index = same_types(*itType, build_base_type("any")) ?
 		    try_app_term_params_any_dup(middle_index) : middle_index; 
 		ret.push_back(result_index);
-		ASSERT(same_types(itTerm->metadata.get_type(), *itType),
-		       "Expected type of application argument does not match inferred");
+		ASSERT2(same_types(itTerm->metadata.get_type(), *itType),
+		        "Inferred type '%s' of application argument does "
+		        "not match expected '%s'", type_to_string(*itType).c_str(),
+		        type_to_string(itTerm->metadata.get_type()).c_str());
 		++itType; ++itTerm;
 		goto begin;
 	}
@@ -1410,6 +1439,42 @@ int try_unit_term(Term &term) {
 	return 0;
 }						 
 
+int try_string_term(Term &term) {
+	if (term.type == TERM_TYPE_SINGLE  &&
+	    term.single.type == TOKEN_TYPE_STRING)
+	{
+		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
+		const Type type = build_uni_poly_type("ptr", build_base_type("char"));
+		term.metadata.set_type(type);
+		cheme_printf("%s = %s;\n",
+		             try_var_term_var_list_elem_translate
+		             (type, get_next_temp(), false).c_str(),
+		             term.single.str.c_str());
+		cheme_printf_unset_zone();
+		return temp_index - 1;
+	}
+	else
+		return 0;
+}
+
+int try_char_term(Term &term) {
+	if (term.type == TERM_TYPE_SINGLE  &&
+	    term.single.type == TOKEN_TYPE_CHAR)
+	{
+		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
+		const Type type = build_base_type("char");
+		term.metadata.set_type(type);
+		cheme_printf("%s = %s;\n",
+		             try_var_term_var_list_elem_translate
+		             (type, get_next_temp(), false).c_str(),
+		             term.single.str.c_str());
+		cheme_printf_unset_zone();
+		return temp_index - 1;
+	}
+	else
+		return 0;
+}
+
 int try_set_term(Term &term) {
 	if (is_specific_special_form(term, "<-")) {
 		ASSERT(term.list.size() == 3, "set special form should get 2 params");
@@ -1439,9 +1504,9 @@ int try_set_term(Term &term) {
 	return 0;
 }
 
-int try_and_term(Term &term) {
-	if (is_specific_special_form(term, "and")) {
-		ASSERT(term.list.size() > 2, "and"
+int try_and_term_or_term(Term &term, bool is_or) {
+	if (is_specific_special_form(term, is_or ? "or" : "and")) {
+		ASSERT(term.list.size() > 2, "and/or"
 		       " special form should get at least 2 params");
 		std::list<Term>::iterator it = term.list.begin(); ++it;
 		const int false_label_index = temp_index++;
@@ -1453,7 +1518,8 @@ int try_and_term(Term &term) {
 			ASSERT(same_types(term.metadata.get_type(),
 			                  build_base_type("bool")),
 			                  "operands to and should be booleans");
-			cheme_printf("if (!(%s)) goto %s;\n",
+			cheme_printf("if (%c!(%s)) goto %s;\n",
+			             is_or ? '!' : ' ',
 			             make_temp_name(value_temp_index).c_str(),
 			             make_temp_name(false_label_index).c_str());
 		}
@@ -1463,17 +1529,21 @@ int try_and_term(Term &term) {
 		             TVTVLET(build_base_type("bool"), result_var,
 		                     false).c_str());
 #undef TVTVLET											
-		cheme_printf("%s = true;\ngoto %s;\n",result_var.c_str(),
+		cheme_printf("%s = %ctrue;\ngoto %s;\n", 
+		             result_var.c_str(), is_or ? '!' : ' ',
 		             make_temp_name(finish_label_index).c_str());
-		cheme_printf("%s: %s = false;\n",
+		cheme_printf("%s: %s = %cfalse;\n", 
 		             make_temp_name(false_label_index).c_str(),
-		             result_var.c_str());
+		             result_var.c_str(), is_or ? '!' : ' ');
 		cheme_printf("%s:;\n", make_temp_name(finish_label_index).c_str());
 		term.metadata.set_type(build_base_type("bool"));
 		return temp_index - 1;
 	}
 	return 0;
 }
+
+int try_and_term(Term &term) { return try_and_term_or_term(term, false); }
+int try_or_term (Term &term) { return try_and_term_or_term(term, true);  }
 
 int try_var_ref_term(Term &term) {
 	if (term.is_single_word())
@@ -1584,8 +1654,8 @@ int try_if_term(Term &term) {
 
 int try_begin_term(Term &term) {
 	if (is_specific_special_form(term, "begin")) {
-		ASSERT(term.list.size() > 2,
-		       "begin should wrap more than one expression");
+		ASSERT(term.list.size() > 1,
+		       "begin should wrap at least one expression");
 		std::list<Term>::iterator it = term.list.begin(); ++it;
 		cheme_printf_push();
 		FunctionManager::start_scope();
@@ -1682,10 +1752,16 @@ int try_lambda_term(Term &term) {
 			std::list<Type>::const_iterator it =
 			    declared_type.type_params.end(); --it;
 			type_params.push_back(*it);
-			ASSERT(same_type_lists(type_params, declared_type.type_params),
-			       "Declared lambda type does not match actual lambda");
+#define PRM_STR(params) (type_to_string(build_poly_type("func", \
+                                                        (params))).c_str())
+			ASSERT2(same_type_lists(type_params, declared_type.type_params),
+			        "Declared lambda type does not match actual lambda. "
+			        "Types are:\nDeclared: %s\nInferred: %s",
+			        PRM_STR(declared_type.type_params),
+			        PRM_STR(type_params));
+#undef PRM_STR
 			type = build_poly_type("func", type_params);
-			FunctionManager::add_simple(name, type); // allow recursion
+			FunctionManager::add(name, type, name, "", true); // allow recursion
 		}
 		if (is_var_init_term(term)) // if this is const lambda, allow recursion
 		cheme_printf_push_body();
@@ -1735,7 +1811,7 @@ int try_any_is_term(Term &term) {
 		    ("bool %s = (%s(&%s) == %s);\n",
 		     make_temp_name(result_index).c_str(),
 		     HIDDEN_CHEME_ANY_TYPE, make_temp_name(value_index).c_str(),
-		     make_type_desc_name(TypeInstanceManager::add(type)).c_str());
+		     make_type_desc_data_name(TypeInstanceManager::add(type)).c_str());
 		term.metadata.set_type(build_base_type("bool"));
 		return result_index;
 	}
@@ -1780,12 +1856,12 @@ int try_any_to_term(Term &term) {
 		const int result_index = temp_index++;
 		const std::string value_str(make_temp_name(value_index));
 		const std::string result_str(make_temp_name(result_index));
-		const std::string type_desc_str = make_type_desc_name
+		const std::string type_desc_data_str = make_type_desc_data_name
 		    (TypeInstanceManager::add(type));
 
 		cheme_printf("if (%s(&%s) != %s) abort(); /* 'any' type-safety */ \n",
 		             HIDDEN_CHEME_ANY_TYPE, value_str.c_str(),
-		             type_desc_str.c_str());
+		             type_desc_data_str.c_str());
 		cheme_printf("%s;\n",
 		             try_var_term_var_list_elem_translate(type, result_str,
 					                                      false).c_str());
@@ -1809,12 +1885,12 @@ int try_to_any_term(Term &term) {
 		const int size = type_info(type).size;
 		const int result_index = temp_index++;
 		const std::string result_str(make_temp_name(result_index));
-		const std::string type_desc_str = make_type_desc_name
+		const std::string type_desc_data_str = make_type_desc_data_name
 		    (TypeInstanceManager::add(type));
 		cheme_printf("any %s; *%s(&%s) = %s;\n",
 		             result_str.c_str(),
 		             HIDDEN_CHEME_ANY_TYPE_PTR,
-		             result_str.c_str(), type_desc_str.c_str());
+		             result_str.c_str(), type_desc_data_str.c_str());
 		if (size > ANY_SIZE_THRESHOLD)
 			cheme_printf("*%s(&%s) = malloc(%d);\n",
 			             HIDDEN_CHEME_ANY_DPTR_PTR, result_str.c_str(), size);
@@ -2007,20 +2083,56 @@ int try_tupv_term(Term &term) {
 int try_ptr_add_term(Term &term) {
 	if (is_specific_special_form(term, "ptr_add")) {
 		ASSERT(term.list.size() == 3, "ptr_add should get two parameters");
-		std::list<Term>::iterator it = term.list.begin(); ++it;
-		int value_index = handle_term(*it); ++it;
+		std::list<Term>::iterator it = term.list.begin();
+		int value_index = handle_term(*++it);
 		Type type = it->metadata.get_type();
 		ASSERT(type.name == "ptr", "ptr_add 1st parameter must be a pointer");
-		int offset_index = handle_term(*it);
+		int offset_index = handle_term(*++it);
 		ASSERT(same_types(it->metadata.get_type(), build_base_type("int")),
 		       "ptr_add 2nd parameter must be an int");
 		int result_index = temp_index++;	   
 		std::string s = try_var_term_var_list_elem_translate
-		    (type, make_temp_name(result_index).c_str(), false);
+		    (type, make_temp_name(result_index), false);
 		cheme_printf("%s = %s + %s;", s.c_str(),
 		             make_temp_name(value_index).c_str(),
 		             make_temp_name(offset_index).c_str());
 		term.metadata.set_type(type);
+		return result_index;
+	}
+	return 0;
+}
+
+int try_is_null_term(Term &term) {
+	if (is_specific_special_form(term, "is_null")) {
+		ASSERT(term.list.size() == 2, "is_null should get one parameter");
+		std::list<Term>::iterator it = term.list.begin();
+		int value_index = handle_term(*++it);
+		Type type = it->metadata.get_type();
+		ASSERT(type.name == "ptr", "is_null 1st parameter must be a pointer");
+		int result_index = temp_index++;
+		std::string s = try_var_term_var_list_elem_translate
+		    (build_base_type("bool"), make_temp_name(result_index), false);
+		cheme_printf("%s = (%s == NULL);\n",
+		             make_temp_name(result_index).c_str(),
+		             make_temp_name(value_index).c_str());
+		term.metadata.set_type(build_base_type("bool"));
+		return result_index;
+	}
+	return 0;
+}
+
+int try_new_term(Term &term) {
+	if (is_specific_special_form(term, "new")) {
+		ASSERT(term.list.size() == 2, "new should get one parameter");
+		std::list<Term>::iterator it = term.list.begin();
+		Type type = type_from_term(*++it);
+		int size = type_info(type).size;
+		int result_index = temp_index++;
+		Type result_type = build_uni_poly_type("ptr", type);
+		std::string s = try_var_term_var_list_elem_translate
+		    (result_type, make_temp_name(result_index), false);
+		cheme_printf("%s = malloc(%d);\n", s.c_str(), size);
+		term.metadata.set_type(result_type);
 		return result_index;
 	}
 	return 0;
@@ -2040,6 +2152,7 @@ int handle_term(Term &term) {
 	TRY(try_while_term)
 	TRY(try_set_term)
 	TRY(try_and_term)
+	TRY(try_or_term)
 	TRY(try_if_term)
 	TRY(try_begin_term)
 	TRY(try_lambda_term)
@@ -2050,12 +2163,16 @@ int handle_term(Term &term) {
 	TRY(try_unpack_term)
 	TRY(try_int_term)
 	TRY(try_unit_term)
+	TRY(try_string_term)
+	TRY(try_char_term)	
 	TRY(try_any_is_term)
 	TRY(try_any_to_term)
 	TRY(try_to_any_term)
 	TRY(try_at_term)
 	TRY(try_tupv_term)
 	TRY(try_ptr_add_term)
+	TRY(try_is_null_term)
+	TRY(try_new_term)
 	TRY(try_app_term)
 	TRY(try_var_ref_term)
 	ELSE
@@ -2080,14 +2197,14 @@ int handle_term(Term &term) {
 }
 
 #undef printf
-void print_type_desc(const std::pair<Type, int> &pair) {
+void print_type_desc_data(const std::pair<Type, int> &pair) {
 // we need too access to printf for this one
-	printf("type_desc %s_data = {%d};\n",
-	       make_type_desc_name(pair.second).c_str(),
+	printf("hidden_cheme_type_desc_data %s_data = {%d};\n",
+	       make_type_desc_data_name(pair.second).c_str(),
 	       type_info(pair.first).size);
-	printf("type_desc * const %s = &%s_data;\n",
-	       make_type_desc_name(pair.second).c_str(),
-	       make_type_desc_name(pair.second).c_str());
+	printf("hidden_cheme_type_desc_data * const %s = &%s_data;\n",
+	       make_type_desc_data_name(pair.second).c_str(),
+	       make_type_desc_data_name(pair.second).c_str());
 	       
 }
 
@@ -2112,24 +2229,27 @@ void print_tup_structs() {
 }
 #define printf DO NOT USE THIS
 
-void print_type_descs() {
+void print_type_desc_datas() {
 	std::list< std::pair<Type, int> > desc_pairs = TypeInstanceManager::all();
 	std::for_each(desc_pairs.begin(), desc_pairs.end(),
-	              print_type_desc);
+	              print_type_desc_data);
 }
 
 
 void print_header_stuff() {
 	puts("void abort(void); void *malloc(long size); void free(void *ptr);\n");
 	puts("void *memcpy(void *dest, const void *src, long n);");
-	puts("typedef struct { int size; } type_desc;");
+	puts("typedef struct { int size; } hidden_cheme_type_desc_data;");
+	puts("typedef hidden_cheme_type_desc_data *type_desc;");
 	puts(CHEME_TYPE_BOOL_STR);
 	puts(CHEME_TYPE_UNIT_STR);
 	puts("static unit unitv() { unit v; return v; }");
 	puts(CHEME_TYPE_ANY_STR);
-	puts("static type_desc**"HIDDEN_CHEME_ANY_TYPE_PTR"(any *a) "
+	puts("static hidden_cheme_type_desc_data**"
+	     HIDDEN_CHEME_ANY_TYPE_PTR"(any *a) "
 	     "{return &a->t;}");
-	puts("static type_desc *"HIDDEN_CHEME_ANY_TYPE    "(any *a) "
+	puts("static hidden_cheme_type_desc_data *"
+	     HIDDEN_CHEME_ANY_TYPE    "(any *a) "
 	     "{return  a->t;}");
 	puts("static char **    "HIDDEN_CHEME_ANY_DPTR_PTR"(any *a) "
 	     "{return &a->d;}");
@@ -2157,7 +2277,7 @@ void print_header_stuff() {
 	     "{ return x == y; }");
 	puts("static double int2double(int x) { return (double)x; }");
 	puts("static int double2int(double x) { return (int)x; }");
-	print_type_descs();
+	print_type_desc_datas();
 	print_tup_structs();
 }
 
@@ -2175,11 +2295,11 @@ void add_primitives() {
 	iib.push_back(build_base_type("int"));
 	iib.push_back(build_base_type("bool"));
 	FunctionManager::add("==", build_poly_type("func", iib),
-	                     HIDDEN_CHEME_CMP_INTS, "");
+	                     HIDDEN_CHEME_CMP_INTS, "", true);
 	FunctionManager::add("<", build_poly_type("func", iib),
-	                     HIDDEN_CHEME_LT, "");
+	                     HIDDEN_CHEME_LT, "", true);
 	FunctionManager::add(">", build_poly_type("func", iib),
-	                     HIDDEN_CHEME_GT, "");
+	                     HIDDEN_CHEME_GT, "", true);
 	std::list<Type> iii;
 	iii.push_back(build_base_type("int"));
 	iii.push_back(build_base_type("int"));
@@ -2187,11 +2307,11 @@ void add_primitives() {
 	FunctionManager::add_simple("mod", build_poly_type("func", iii));
 	FunctionManager::add_simple("div", build_poly_type("func", iii));
 	FunctionManager::add("+", build_poly_type("func", iii),
-	                     HIDDEN_CHEME_ADD_INTS, "");
+	                     HIDDEN_CHEME_ADD_INTS, "", true);
 	FunctionManager::add("-", build_poly_type("func", iii),
-	                     HIDDEN_CHEME_SUB_INTS, "");
+	                     HIDDEN_CHEME_SUB_INTS, "", true);
 	FunctionManager::add("*", build_poly_type("func", iii),
-	                     HIDDEN_CHEME_MUL_INTS, "");
+	                     HIDDEN_CHEME_MUL_INTS, "", true);
 	std::list<Type> id;
 	id.push_back(build_base_type("int"));
 	id.push_back(build_base_type("double"));
@@ -2205,6 +2325,29 @@ void add_primitives() {
 	ccb.push_back(build_base_type("char"));
 	ccb.push_back(build_base_type("bool"));
 	FunctionManager::add_simple("char_eq", build_poly_type("func", ccb));
+	std::list<Type> ttb;
+	ttb.push_back(build_base_type("type_desc"));
+	ttb.push_back(build_base_type("type_desc"));
+	ttb.push_back(build_base_type("bool"));	
+	FunctionManager::add_simple("type_desc_eq", build_poly_type("func", ttb));
+	std::list<Type> at;
+	at.push_back(build_base_type("any"));
+	at.push_back(build_base_type("type_desc"));
+	FunctionManager::add_simple("any_type", build_poly_type("func", at));
+	std::list<Type> ssb;
+	ssb.push_back(build_uni_poly_type("ptr", build_base_type("char")));
+	ssb.push_back(build_uni_poly_type("ptr", build_base_type("char")));
+	ssb.push_back(build_base_type("bool"));
+	FunctionManager::add_simple("str_eq", build_poly_type("func", ssb));
+	std::list<Type> aab;
+	aab.push_back(build_base_type("any"));
+	aab.push_back(build_base_type("any"));
+	aab.push_back(build_base_type("bool"));
+	FunctionManager::add_simple("any_eq", build_poly_type("func", aab));
+	
+	FunctionManager::add_simple("true", build_base_type("bool"));
+	FunctionManager::add_simple("false", build_base_type("bool"));
+	
 }
 
 int main() {
