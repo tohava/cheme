@@ -1,7 +1,7 @@
 (type_pack (tup any (ptr anylist)) anylist)
 (var  
  ((ptr anylist) nil)
-
+ ((func bool bool) mnot (lambda ((bool b)) (if b false true)))
  ((func any (ptr anylist)) a2l 
   (lambda ((any a))
 	(any_to (ptr anylist) a)))
@@ -84,32 +84,30 @@
 
 (var ((func any any bool) match		   
 	  (lambda ((any expr) (any data))
-		(var ((func (ptr anylist) (ptr anylist) bool) list_match
-			  (lambda (((ptr anylist) expr) ((ptr anylist) data))
-				(if (is_null expr) 
-					(is_null data)
-					(if (is_null data)
-						false
-						(and (match      (car expr) (car data))
-							 (list_match (cdr expr) (cdr data))))))))
-		(if (is_cspecial expr)
-			(begin (var ((ptr char)    s         (get_cspecial expr))
-                        ((ptr anylist) expr_list (a2l expr)))
-			  (if (str_eq s "b*") 
-					 (begin (var (any param (car (cdr expr_list))))
-                       (or (match (to_any (cdr expr_list)) data)
-						   (and (any_is (ptr anylist) data)
-								(match param     (car (a2l data)))
-								(match expr      (to_any (cdr (a2l data)))))))
-					 false))
-        (if (is_wild expr) 
+		(if (is_wild expr)
 			true
-		(if (and (any_is (ptr anylist) expr)
-				 (any_is (ptr anylist) data))
-			(list_match (a2l expr) (a2l data))
+		(if (and (mnot (any_is (ptr anylist) expr))
+				 (mnot (any_is (ptr anylist) data)))
+			(any_eq expr data)
 
-			(any_eq expr data)))))))
+			(begin
+			  (var ((ptr anylist) el  (a2l expr))
+				   ((ptr anylist) dl  (a2l data))
+				   (any           el1 (car el))
+				   (any           dl1 (car dl)))
+			  (if (is_null el) 
+				  (is_null dl)
+			  (if (and (is_cspecial el1) (str_eq (get_cspecial el1) "b*"))
+				  (or (match (to_any (cdr el)) (to_any dl))
+					  (begin (var (any param (car (cdr (a2l el1)))))
+					    (and (match param dl1)
+							 (match expr  (to_any (cdr dl))))))
 
+			  (if (is_null dl)
+				  false
+
+                  (and (match (car el)          (car dl))
+					   (match (to_any (cdr el)) (to_any (cdr dl)))))))))))))
 (match 
  (to_any
   (cons 
