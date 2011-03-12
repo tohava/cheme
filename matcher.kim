@@ -1,3 +1,4 @@
+(decl ((func int int) putchar))
 (type_pack (tup any (ptr anylist)) anylist)
 (var  
  ((ptr anylist) nil)
@@ -20,9 +21,35 @@
   (lambda (((ptr anylist) l))
 	(at (unpack (ind l)) 1)))
 
+ ((func (func any any) (ptr anylist) (ptr anylist)) map
+  (lambda ( ((func any any) f) 
+			((ptr anylist)  l) )
+	(if (is_null l) nil (cons (f (car l)) (map f (cdr l))))))
+
+ ((func any any) display 
+  (lambda ((any a))
+	(if (any_is char       a)
+		(begin (putchar (char2int (any_to char       a))) unitv)
+    (if (any_is (ptr char) a)
+		(begin 
+		  (var ((ptr char) p (any_to (ptr char) a)))
+		  (while (mnot (char_eq (ind p) '\0'))
+				 (begin
+				   (putchar (char2int (ind p)))
+				   (<- (ref p) (ptr_add p 1)))))
+    (if (any_is (ptr anylist) a)
+		(begin
+		  (putchar 40)
+		  (map (lambda ((any a)) (display a) (display (to_any " "))) 
+			   (any_to (ptr anylist) a))
+		  (putchar 41)
+		  unitv)
+		(begin (display (to_any "<UNDISPLAYABLE>")) unitv))))
+	a))
+
  ((func any (ptr char)) first_word
   (lambda ((any a))
-	(if (any_is anylist a)
+	(if (any_is (ptr anylist) a)
 		(begin (var ((ptr anylist) l (a2l a)))
 		  (if (any_is (ptr char) (car l)) (any_to (ptr char) (car l)) ""))
 		"")))
@@ -38,6 +65,11 @@
            (and
 			(char_eq (ind (ptr_add p 0)) '?' )
 			(char_eq (ind (ptr_add p 1)) '\0'))))))
+
+ ((func any (ptr char) bool) is_word
+  (lambda ((any a) ((ptr char) w) )
+	(and (any_is (ptr char) a)
+		 (str_eq (any_to (ptr char) a) w)))) 
 
  ((func any bool) is_cspecial_empty
   (lambda ((any a))
@@ -59,12 +91,12 @@
 						 (any_compare (car a) (car b))
 						 (compare_lists (cdr a) (cdr b)))))))))
 	(and
-	 (type_desc_eq (any_type a) (any_type b))
+	 (type_desc_eq (any_type (ref a)) (any_type (ref b)))
 	 (if (any_is (ptr char) a)
 			(str_eq (any_to (ptr char) a) (any_to (ptr char) b))
      (if (any_is anylist a)
 			(compare_lists (a2l a) (a2l b))
-	 		(any_eq a b))))))
+	 		(any_eq (ref a) (ref b) ))))))
 
  ((func (func any bool) (ptr anylist) (ptr anylist)) filter
   (lambda ( ((func any bool) f) 
@@ -73,11 +105,7 @@
 		(cons (car l) (filter f (cdr l)))
 		(filter f (cdr l)))))
 
- ((func (func any any) (ptr anylist) (ptr anylist)) map
-  (lambda ( ((func any any) f) 
-			((ptr anylist)  l) )
-	(cons (f (car l)) (map f (cdr l))))))
-
+)
 
  
 			
@@ -88,39 +116,43 @@
 			true
 		(if (and (mnot (any_is (ptr anylist) expr))
 				 (mnot (any_is (ptr anylist) data)))
-			(any_eq expr data)
+			(any_compare expr data)
 
 			(begin
 			  (var ((ptr anylist) el  (a2l expr))
 				   ((ptr anylist) dl  (a2l data))
-				   (any           el1 (car el))
-				   (any           dl1 (car dl)))
+				   (any           el1 (if (is_null el) (to_any nil) (car el))))
 			  (if (is_null el) 
 				  (is_null dl)
 			  (if (and (is_cspecial el1) (str_eq (get_cspecial el1) "b*"))
 				  (or (match (to_any (cdr el)) (to_any dl))
 					  (begin (var (any param (car (cdr (a2l el1)))))
-					    (and (match param dl1)
+					    (and (mnot (is_null dl))
+							 (match param (car dl))
 							 (match expr  (to_any (cdr dl))))))
 
 			  (if (is_null dl)
 				  false
 
                   (and (match (car el)          (car dl))
-					   (match (to_any (cdr el)) (to_any (cdr dl)))))))))))))
-(match 
- (to_any
-  (cons 
-   (to_any "cond")
-   (cons 
-	(to_any (cons (to_any ":b*") 
-				  (cons (to_any (cons (to_any "?") (cons (to_any "?") nil))) 
-						nil) ) )
-	nil)))
- (to_any
-  (cons 
-   (to_any "cond") 
-   (cons 
-	(to_any (cons (to_any "a") (cons (to_any "b") nil)))
-	nil))))
-  
+					   (match (to_any (cdr el)) (to_any (cdr dl))))))))))))
+	 
+	 ((func (ptr anylist) any) cond2if
+	  (lambda (((ptr anylist) l))
+		(var ((func (ptr anylist) any) raw
+			  (lambda (((ptr anylist) l))
+				(var (any           x (car      (a2l (car l))))
+					 (any           y (car (cdr (a2l (car l))))))
+				(if (is_word x "else") 
+					y 
+					(to_any (cons (to_any "if") 
+								  (cons x (cons y (cons (raw (cdr l)) 
+														nil)))))))))
+		(raw (cdr l)))))
+		
+(var (any a (quote (cond (a b) (c d) (e f) (g h) (else i)))))
+(display (to_any "Will transform '"))
+(display a)
+(display (to_any "':\n"))
+(display (cond2if (any_to (ptr anylist) a)))	 
+		 

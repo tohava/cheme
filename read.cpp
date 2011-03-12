@@ -29,7 +29,7 @@
 #define HIDDEN_CHEME_ANY_DPTR      "hidden_cheme_any_dptr"
 #define HIDDEN_CHEME_ANY_SPTR      "hidden_cheme_any_sptr"
 #define HIDDEN_CHEME_ANY_TYPE_PTR  "hidden_cheme_any_type_ptr"
-#define HIDDEN_CHEME_ANY_TYPE      "hidden_cheme_any_type"
+#define HIDDEN_CHEME_ANY_TYPE      "any_type"
 
 
 #define ANY_SIZE_THRESHOLD     16
@@ -787,11 +787,16 @@ public:
 		              list_pop_and_maybe_delete);
 		scope.pop_back();
 	}
-	static void start_lambda() { ++lambda_depth; }
+	static void start_lambda(std::string str) {
+		++lambda_depth;
+		lambda_list.push_back(str);
+	}
 	static void end_lambda() {
 		--lambda_depth;
 		ASSERT(lambda_depth >= 0, "lambda depth cannot be negative");
-	}	
+		lambda_list.pop_back();
+	}
+	static std::list<std::string> &get_lambda_list() { return lambda_list; }
 	static int cur_scope_depth() { return scope.size() - 1; }
 	static bool in_global_scope() { return lambda_depth == 0;}
 	
@@ -803,11 +808,13 @@ private:
 	static map_t map;
 	static scope_t scope;
 	static int lambda_depth;
+	static std::list<std::string> lambda_list;
 };
 
 FunctionManager::map_t FunctionManager::map;
 FunctionManager::scope_t FunctionManager::scope;
 int FunctionManager::lambda_depth = 0;
+std::list<std::string> FunctionManager::lambda_list;
 
 class TypeInfo {
 public:
@@ -1135,12 +1142,16 @@ std::string try_var_term_var_list_elem_translate
 	}
 }
 
-void init_any_to_unit(const std::string &s) {
-	cheme_printf("%s.t = %s;\n",
-	             s.c_str(),
-	             make_type_desc_data_name(
-	                 TypeInstanceManager::add(
-	                     build_base_type("unit"))).c_str());
+void set_any_type(const std::string &name, const Type &type) {
+	int typetd = TypeInstanceManager::add(type);
+	cheme_printf
+	    ("*"HIDDEN_CHEME_ANY_TYPE_PTR"(&%s) = %s;\n",
+	     name.c_str(),
+	     make_type_desc_data_name(typetd).c_str());
+}
+
+void init_any_to_unit(const std::string &name) {
+	set_any_type(name, build_base_type("unit"));
 }
 
 void try_var_term_var_list(std::list<Term>::iterator it,
@@ -1364,8 +1375,9 @@ begin:
 		ret.push_back(result_index);
 		ASSERT2(same_types(itTerm->metadata.get_type(), *itType),
 		        "Inferred type '%s' of application argument does "
-		        "not match expected '%s'", type_to_string(*itType).c_str(),
-		        type_to_string(itTerm->metadata.get_type()).c_str());
+		        "not match expected '%s'",
+		        type_to_string(itTerm->metadata.get_type()).c_str(),
+		        type_to_string(*itType).c_str());
 		++itType; ++itTerm;
 		goto begin;
 	}
@@ -1388,6 +1400,14 @@ int try_app_term(Term &term) {
 	cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
 	int result_index = temp_index++;
 #define TVTVLET try_var_term_var_list_elem_translate
+	{
+		std::list<std::string> &ll = FunctionManager::get_lambda_list();
+		if (std::find(ll.begin(), ll.end(), str) != ll.end()) {
+			cheme_printf("%s;\n",
+			             TVTVLET(t, FunctionManager::true_name(str).c_str(),
+			                     true).c_str());
+		}
+	}
 	cheme_printf("%s = %s(",
 	       TVTVLET(*itTypeRet, make_temp_name(result_index).c_str(),
 	               false).c_str(), FunctionManager::true_name(str).c_str());
@@ -1627,10 +1647,12 @@ int try_if_term(Term &term) {
 			if (false_exp != NULL) {
 				cheme_printf(" else {\n");
 				const int false_index = handle_term(*false_exp);
-				ASSERT(same_types(false_exp->metadata.get_type(),
-				                  true_exp->metadata.get_type()),
-				       "if true expression and false expression must "
-				       "have same types");
+				ASSERT2(same_types(false_exp->metadata.get_type(),
+				                   true_exp->metadata.get_type()),
+				        "if true expression and false expression must "
+				        "have same types (current types are: '%s' and '%s'",
+				        type_to_string(false_exp->metadata.get_type()).c_str(),
+				        type_to_string(true_exp ->metadata.get_type()).c_str());
 				cheme_printf("%s = %s;\n", result_var.c_str(),
 				             make_temp_name(false_index).c_str());
 				cheme_printf("}\n");
@@ -1665,8 +1687,8 @@ int try_begin_term(Term &term) {
 		                                    term.list.end());
 		cheme_printf("%s = %s;\n",make_temp_name(result_index).c_str(),
 		             make_temp_name(final_value_index).c_str());
-		cheme_printf("}\n");
 		FunctionManager::end_scope();
+		cheme_printf("}\n");
 		std::auto_ptr<char> p(cheme_printf_pop());
 		it = term.list.end(); --it;
 #define TVTVLET try_var_term_var_list_elem_translate
@@ -1739,10 +1761,12 @@ int try_lambda_term(Term &term) {
 		const bool is_const_lambda = is_var_init_term(term);	   
 		std::string name = is_const_lambda ?
 	        try_var_term_var_list_elem_name(term.parent->list) :
-		    get_next_temp();
+				get_next_temp();
+		int lambda_index = is_const_lambda ? -1 : (temp_index - 1);
 		std::list<Term>::iterator it = term.list.begin(); ++it;
 
-		FunctionManager::start_scope(); FunctionManager::start_lambda();
+		FunctionManager::start_scope();
+		FunctionManager::start_lambda(is_const_lambda ? name : "");
 		std::list<Type> type_params = ::map(try_lambda_term_add_param_var,
 		                                    it->list, &*type_params.begin());
 		Type type;
@@ -1763,7 +1787,6 @@ int try_lambda_term(Term &term) {
 			type = build_poly_type("func", type_params);
 			FunctionManager::add(name, type, name, "", true); // allow recursion
 		}
-		if (is_var_init_term(term)) // if this is const lambda, allow recursion
 		cheme_printf_push_body();
 		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
 			   
@@ -1778,23 +1801,26 @@ int try_lambda_term(Term &term) {
 		it = term.list.end(); --it;
 		try_lambda_term_header(term, name, it->metadata.get_type());
 		cheme_printf("%s",body.get());
+		FunctionManager::end_scope(); FunctionManager::end_lambda();
 		try_lambda_term_footer();
+		cheme_printf_unset_zone();
+		cheme_printf_pop_body();
+
 		if (!is_const_lambda) { // otherwise, this was already done above
 			type_params.push_back(it->metadata.get_type());
 			type = build_poly_type("func", type_params);
 		} else { // make sure declared return type matches actual return type
 			std::list<Type>::iterator it2 = type_params.end(); --it2;
-			ASSERT(same_types(it->metadata.get_type(), *it2),
-			       "Declared return type is not the same as "
-			       "inferred return type");
+			ASSERT2(same_types(it->metadata.get_type(), *it2),
+			        "Declared return type '%s' is not the same as "
+			        "inferred return type '%s'",
+			        type_to_string(*it2).c_str(),
+			        type_to_string(it->metadata.get_type()).c_str());
 		}
 
-		cheme_printf_unset_zone();
-		cheme_printf_pop_body();
 
-		FunctionManager::end_scope(); FunctionManager::end_lambda();
 		term.metadata.set_type(type);
-		return -1;
+		return lambda_index;
 	}
 	return 0;
 }
@@ -1873,31 +1899,34 @@ int try_any_to_term(Term &term) {
 	return 0;
 }
 
+int try_to_any_term_raw(Term &term) {
+	const int value_index = handle_term(term);
+	const std::string value_str(make_temp_name(value_index));
+	const Type &type = term.metadata.get_type();
+	const int size = type_info(type).size;
+	const int result_index = temp_index++;
+	const std::string result_str(make_temp_name(result_index));
+	const std::string type_desc_data_str = make_type_desc_data_name
+	    (TypeInstanceManager::add(type));
+	cheme_printf("any %s; *%s(&%s) = %s;\n",
+	             result_str.c_str(),
+	             HIDDEN_CHEME_ANY_TYPE_PTR,
+	             result_str.c_str(), type_desc_data_str.c_str());
+	if (size > ANY_SIZE_THRESHOLD)
+		cheme_printf("*%s(&%s) = malloc(%d);\n",
+		             HIDDEN_CHEME_ANY_DPTR_PTR, result_str.c_str(), size);
+	try_to_any_term_assignment(result_str, value_str, false,
+	                           type_info(term.metadata.get_type()).size);
+	return result_index;
+}
 
 int try_to_any_term(Term &term) {
 	if (is_specific_special_form(term, "to_any")) {
 		ASSERT(term.list.size() == 2,
 		       "to_any should accept a single expression");
 		std::list<Term>::iterator it = term.list.begin(); ++it;
-		const int value_index = handle_term(*it);
-		const std::string value_str(make_temp_name(value_index));
-		const Type &type = it->metadata.get_type();
-		const int size = type_info(type).size;
-		const int result_index = temp_index++;
-		const std::string result_str(make_temp_name(result_index));
-		const std::string type_desc_data_str = make_type_desc_data_name
-		    (TypeInstanceManager::add(type));
-		cheme_printf("any %s; *%s(&%s) = %s;\n",
-		             result_str.c_str(),
-		             HIDDEN_CHEME_ANY_TYPE_PTR,
-		             result_str.c_str(), type_desc_data_str.c_str());
-		if (size > ANY_SIZE_THRESHOLD)
-			cheme_printf("*%s(&%s) = malloc(%d);\n",
-			             HIDDEN_CHEME_ANY_DPTR_PTR, result_str.c_str(), size);
-		try_to_any_term_assignment(result_str, value_str, false,
-		                           type_info(it->metadata.get_type()).size);
 		term.metadata.set_type(build_base_type("any"));
-		return result_index;
+		return try_to_any_term_raw(*it);
 	}
 	return 0;
 }
@@ -2113,8 +2142,7 @@ int try_is_null_term(Term &term) {
 		std::string s = try_var_term_var_list_elem_translate
 		    (build_base_type("bool"), make_temp_name(result_index), false);
 		cheme_printf("%s = (%s == NULL);\n",
-		             make_temp_name(result_index).c_str(),
-		             make_temp_name(value_index).c_str());
+		             s.c_str(), make_temp_name(value_index).c_str());
 		term.metadata.set_type(build_base_type("bool"));
 		return result_index;
 	}
@@ -2134,6 +2162,90 @@ int try_new_term(Term &term) {
 		cheme_printf("%s = malloc(%d);\n", s.c_str(), size);
 		term.metadata.set_type(result_type);
 		return result_index;
+	}
+	return 0;
+}
+
+int try_quote_term_make_anylist(std::list<Term>::iterator begin,
+                                std::list<Term>::iterator end) {
+	int try_quote_term_raw(Term &term);
+	const Type anylist_ptr_type = build_uni_poly_type
+	    ("ptr", build_base_type("anylist"));
+	int result_index = temp_index++;
+	std::string s = try_var_term_var_list_elem_translate
+	    (anylist_ptr_type, make_temp_name(result_index), false);
+	if (begin == end) {
+		cheme_printf("%s = NULL;\n", s.c_str());
+	} else {
+		cheme_printf("%s = malloc(sizeof(*%s));\n",
+		             s.c_str(), make_temp_name(result_index).c_str());
+		int car_index = try_quote_term_raw(*begin);
+		cheme_printf("%s->data.elem0 = %s;\n",
+		             make_temp_name(result_index).c_str(),
+		             make_temp_name(car_index).c_str());
+		int cdr_index = try_quote_term_make_anylist(++begin, end);
+		cheme_printf("%s->data.elem1 = %s;\n",
+		             make_temp_name(result_index).c_str(),
+		             make_temp_name(cdr_index).c_str());
+	}
+	return result_index;
+}
+
+int try_quote_term_raw(Term &term) {
+	if (term.type == TERM_TYPE_SINGLE) {
+		switch (term.single.type) {
+		case TOKEN_TYPE_CHAR:
+		case TOKEN_TYPE_INT:
+			return try_to_any_term_raw(term);
+		case TOKEN_TYPE_WORD:
+		{
+			Term t;
+			t.type = TERM_TYPE_SINGLE;
+			t.single.type = TOKEN_TYPE_STRING;
+			t.single.str = std::string("\"") + term.single.str + "\"";
+			return try_to_any_term_raw(t);
+		}
+		default:
+			ASSERT(false, "quote term got parameter that it cannot handle");
+		}
+	} else if (term.type == TERM_TYPE_LIST) {
+		int list_index = try_quote_term_make_anylist(term.list.begin(),
+		                                             term.list.end());
+		int result_index = temp_index++;
+		std::string s = try_var_term_var_list_elem_translate
+		    (build_base_type("any"), make_temp_name(result_index), false);
+		cheme_printf("%s;\n",s.c_str());
+		init_any_to_unit(make_temp_name(result_index));
+		set_any_type(make_temp_name(result_index),
+		             build_uni_poly_type("ptr", build_base_type("anylist")));
+		try_to_any_term_assignment(make_temp_name(result_index),
+		                           make_temp_name(list_index),
+		                           false, sizeof(void*));
+		return result_index;
+	} else {
+		ASSERT(false, "quote term got parameter it cannot handle");
+	}
+}
+
+int try_quote_term(Term &term) {
+	if (is_specific_special_form(term, "quote")) {
+		ASSERT(TypePackManager::is_type_pack("anylist"),
+		       "quote term needs type_pack anylist to be defined");
+		{
+			const Type &t = TypePackManager::unpack("anylist");
+			std::list<Type> l;
+			l.push_back(build_base_type("any"));
+			l.push_back(build_uni_poly_type("ptr", build_base_type("anylist")));
+			const Type expected = build_poly_type("tup", l);
+			ASSERT1(same_types(t, expected),
+			        "anylist should be a type_pack around %s",
+			        type_to_string(expected).c_str());
+		}
+		ASSERT(term.list.size() == 2,
+		       "quote should accept a single parameter");
+		std::list<Term>::iterator it = term.list.begin(); ++it;
+		term.metadata.set_type(build_base_type("any"));
+		return try_quote_term_raw(*it);
 	}
 	return 0;
 }
@@ -2173,6 +2285,7 @@ int handle_term(Term &term) {
 	TRY(try_ptr_add_term)
 	TRY(try_is_null_term)
 	TRY(try_new_term)
+	TRY(try_quote_term)
 	TRY(try_app_term)
 	TRY(try_var_ref_term)
 	ELSE
@@ -2239,6 +2352,7 @@ void print_type_desc_datas() {
 void print_header_stuff() {
 	puts("void abort(void); void *malloc(long size); void free(void *ptr);\n");
 	puts("void *memcpy(void *dest, const void *src, long n);");
+	puts("#define NULL 0");
 	puts("typedef struct { int size; } hidden_cheme_type_desc_data;");
 	puts("typedef hidden_cheme_type_desc_data *type_desc;");
 	puts(CHEME_TYPE_BOOL_STR);
@@ -2275,8 +2389,19 @@ void print_header_stuff() {
 	     "{ return x * y; }");
 	puts("static int "HIDDEN_CHEME_CMP_INTS"(int x, int y) "
 	     "{ return x == y; }");
+	puts("static bool any_eq(any *a, any *b) "
+	     "{ if ("HIDDEN_CHEME_ANY_TYPE"(a) != "HIDDEN_CHEME_ANY_TYPE"(b))\n"
+	     "    return false;\n"
+	     "  if ("HIDDEN_CHEME_ANY_SIZE"(a) <= "ANY_SIZE_THRESHOLD_STR")\n"
+	     "    return memcmp("HIDDEN_CHEME_ANY_SPTR"(a),\n"
+	     "                  "HIDDEN_CHEME_ANY_SPTR"(b)) == 0;\n"
+	     "}\n");
+	puts("static bool char_eq(char a, char b) { return a == b; }");
+	puts("static bool type_desc_eq(type_desc a, type_desc b) { return a == b; }");
+	puts("static bool str_eq(char *a, char *b) { return strcmp(a,b) == 0; }");
 	puts("static double int2double(int x) { return (double)x; }");
 	puts("static int double2int(double x) { return (int)x; }");
+	puts("static int char2int(char c) { return c; }");
 	print_type_desc_datas();
 	print_tup_structs();
 }
@@ -2320,6 +2445,10 @@ void add_primitives() {
 	di.push_back(build_base_type("double"));
 	di.push_back(build_base_type("int"));
 	FunctionManager::add_simple("double2int", build_poly_type("func", di));
+	std::list<Type> ci;
+	ci.push_back(build_base_type("char"));
+	ci.push_back(build_base_type("int"));
+	FunctionManager::add_simple("char2int", build_poly_type("func", ci));
 	std::list<Type> ccb;
 	ccb.push_back(build_base_type("char"));
 	ccb.push_back(build_base_type("char"));
@@ -2331,7 +2460,7 @@ void add_primitives() {
 	ttb.push_back(build_base_type("bool"));	
 	FunctionManager::add_simple("type_desc_eq", build_poly_type("func", ttb));
 	std::list<Type> at;
-	at.push_back(build_base_type("any"));
+	at.push_back(build_uni_poly_type("ptr", build_base_type("any")));
 	at.push_back(build_base_type("type_desc"));
 	FunctionManager::add_simple("any_type", build_poly_type("func", at));
 	std::list<Type> ssb;
@@ -2340,8 +2469,8 @@ void add_primitives() {
 	ssb.push_back(build_base_type("bool"));
 	FunctionManager::add_simple("str_eq", build_poly_type("func", ssb));
 	std::list<Type> aab;
-	aab.push_back(build_base_type("any"));
-	aab.push_back(build_base_type("any"));
+	aab.push_back(build_uni_poly_type("ptr", build_base_type("any")));
+	aab.push_back(build_uni_poly_type("ptr", build_base_type("any")));
 	aab.push_back(build_base_type("bool"));
 	FunctionManager::add_simple("any_eq", build_poly_type("func", aab));
 	
