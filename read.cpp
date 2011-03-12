@@ -49,6 +49,14 @@ struct cheme_type_desc_data;
      typedef struct { cheme_type_desc_data *t; char s[ SS2 ]; char *d; } cheme_any;
 typedef cheme_type_desc_data *cheme_type_desc;
 
+extern "C" {
+	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000000;
+	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000001;
+	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000002;
+}
+cheme_type_desc cheme_type_desc_int = hidden_cheme_type_desc_data00000000;
+cheme_type_desc cheme_type_desc_ptr_char = hidden_cheme_type_desc_data00000001;
+
 struct ErrorContext {
 	long pos;
 };
@@ -476,6 +484,7 @@ Token hidden_cur_token;
 
 void load_cur_token(FILE *f) { hidden_cur_token = read_token_for_real(f); }
 
+
 Token peep_token(FILE *f) {
 	return hidden_cur_token;
 }
@@ -525,6 +534,34 @@ Term read_term(FILE *f, int index) {
 //	printf("read_term: done\n");
 }
 
+extern "C" {
+	cheme_any read_term_as_any() {
+		Term t = read_term(stdin, 0);
+		fprintf(stderr, "read_term_as_any: got term of type %d\n", t.type);
+		cheme_any ret;
+		switch (t.single.type) {
+		case TOKEN_TYPE_INT:
+			ret.t = cheme_type_desc_int;
+			memcpy(ret.s, &t.single.num, sizeof(t.single.num));
+			break;
+		case TOKEN_TYPE_WORD:
+			ret.t = cheme_type_desc_ptr_char;
+			char *p;
+			p = strdup(t.single.str.c_str());
+			memcpy(ret.s, &p, sizeof(p));
+			break;
+		default:
+			ASSERT1(false, "read_term_as_any: Unknown token type %d\n", t.single.type);
+		}
+		fprintf(stderr, "read_term_as_any: return any with t %p\n", ret.t);
+		return ret;
+	}
+
+	int init_read_term_as_any() {
+		load_cur_token(stdin);
+		return 0;
+	}
+}
 
 void set_term_parent_worker(Term *term, Term *parent) {
 	term->parent = parent;
@@ -840,14 +877,57 @@ TypeInfo get_func_type_info(const void *v, const std::list<Type> &ignored)
 { TypeInfo t; t.size = sizeof(void(*)()); return t; }
 TypeInfo get_ptr_type_info(const void *v, const std::list<Type> &ignored)
 { TypeInfo t; t.size = sizeof(void*); return t; }
+TypeInfo get_anylist_type_info(const void *v, const std::list<Type> &ignored)
+{ struct { cheme_any a; void *p; } s; TypeInfo t; t.size = sizeof(s); return t; }
 TypeInfo get_tup_type_info(const void *ignored, const std::list<Type> &t);
 TypeInfo get_packed_type_info(const void *v, const std::list<Type> &ignored);
 
 
+class TypePackManager {
+public:
+	static void add(const std::string &str) {
+		std::map<std::string, Maybe<Type> >::iterator it = map.find(str);
+		ASSERT(it == map.end(), "TypePackManager::add/1 - already there");
+		map.insert(std::make_pair(str, Maybe<Type>()));
+	}
+	static void add(const std::string &str, const Type &type) {
+		std::map<std::string, Maybe<Type> >::iterator it = map.find(str);
+		if (it == map.end())
+			map.insert(std::make_pair(str, Maybe<Type>(type)));
+		else {
+			ASSERT(!it->second.is_valid(),
+			       "TypePackManager::add/2 - already there");
+			it->second = Maybe<Type>(type);
+		}
+	}
+	static bool is_type_pack(const std::string &str) {
+		return map.find(str) != map.end();
+	}
+	static bool is_defined_type_pack(const std::string &str) {
+		return try_unpack(str) != NULL;
+	}
+	static const Type *try_unpack(const std::string &str) {
+		std::map<std::string, Maybe<Type> >::const_iterator it = map.find(str);
+		return (it == map.end() || !it->second.is_valid()) ?
+		    NULL : &it->second.get_data();
+	}
+	static const Type &unpack(const std::string &str) {
+		const Type *p = try_unpack(str);
+		ASSERT1(p != NULL, "TypePackManager::unpack - unknown type %s",
+		        str.c_str());
+		return *p;
+	}
+private:
+	static std::map<std::string, Maybe<Type> > map;
+};
+
+Type build_base_type(const std::string &str);
+Type build_uni_poly_type(const std::string &str, const Type &type);
+Type build_poly_type(const std::string &str,
+                     const std::list<Type> &type_params);
 class TypeManager {
 public:
 	static void init() {
-		typedef std::list<Type> L;
 #define NP(x) std::make_pair(x, (void *)NULL)
 #define BTI(x) base_types.insert(x)
 		BTI(std::make_pair("int",   NP(get_int_type_info)));
@@ -857,13 +937,23 @@ public:
 		BTI(std::make_pair("double",NP(get_double_type_info)));
 		BTI(std::make_pair("any",   NP(get_cheme_any_type_info)));
 		BTI(std::make_pair("type_desc", NP(get_cheme_type_desc_type_info)));
-#undef BTI
 		// we hope all funcptrs have same size
 #define PTI(name,arity,func) \
 poly_types.insert(std::make_pair(name, std::make_pair(arity, NP(func))))
 		PTI("func", -1, get_func_type_info);
 		PTI("tup", -1, get_tup_type_info);
 		PTI("ptr", 1, get_ptr_type_info);
+
+		// add anylist
+		TypePackManager::add("anylist");
+		BTI(std::make_pair("anylist", NP(get_anylist_type_info)));
+		std::list<Type> l;
+		l.push_back(build_base_type("any"));
+		l.push_back(build_uni_poly_type("ptr", build_base_type("anylist")));
+		TypePackManager::add("anylist", build_poly_type("tup", l));
+		
+
+#undef BTI
 #undef PTI
 #undef NP
 	}
@@ -927,6 +1017,13 @@ public:
 		for (map_t::iterator it = map.begin(); it != map.end(); ++it)
 			ret.push_back(*it);
 		return ret;
+	}
+	static void init() {
+		TypeInstanceManager::add(build_base_type("int"));
+		TypeInstanceManager::add(build_uni_poly_type("ptr",
+		                                             build_base_type("char")));
+		TypeInstanceManager::add
+		    (build_uni_poly_type("ptr", build_base_type("anylist")));
 	}
 	static map_t map;
 };
@@ -997,43 +1094,6 @@ Type type_from_term(const Term &term) {
 	return ret;
 }
 
-class TypePackManager {
-public:
-	static void add(const std::string &str) {
-		std::map<std::string, Maybe<Type> >::iterator it = map.find(str);
-		ASSERT(it == map.end(), "TypePackManager::add/1 - already there");
-		map.insert(std::make_pair(str, Maybe<Type>()));
-	}
-	static void add(const std::string &str, const Type &type) {
-		std::map<std::string, Maybe<Type> >::iterator it = map.find(str);
-		if (it == map.end())
-			map.insert(std::make_pair(str, Maybe<Type>(type)));
-		else {
-			ASSERT(!it->second.is_valid(),
-			       "TypePackManager::add/2 - already there");
-			it->second = Maybe<Type>(type);
-		}
-	}
-	static bool is_type_pack(const std::string &str) {
-		return map.find(str) != map.end();
-	}
-	static bool is_defined_type_pack(const std::string &str) {
-		return try_unpack(str) != NULL;
-	}
-	static const Type *try_unpack(const std::string &str) {
-		std::map<std::string, Maybe<Type> >::const_iterator it = map.find(str);
-		return (it == map.end() || !it->second.is_valid()) ?
-		    NULL : &it->second.get_data();
-	}
-	static const Type &unpack(const std::string &str) {
-		const Type *p = try_unpack(str);
-		ASSERT1(p != NULL, "TypePackManager::unpack - unknown type %s",
-		        str.c_str());
-		return *p;
-	}
-private:
-	static std::map<std::string, Maybe<Type> > map;
-};
 
 TypeInfo get_tup_type_info(const void *ignored, const std::list<Type> &t)
 {
@@ -2312,9 +2372,10 @@ int handle_term(Term &term) {
 #undef printf
 void print_type_desc_data(const std::pair<Type, int> &pair) {
 // we need too access to printf for this one
-	printf("hidden_cheme_type_desc_data %s_data = {%d};\n",
+	printf("hidden_cheme_type_desc_data %s_data = {%d}; // %s\n",
 	       make_type_desc_data_name(pair.second).c_str(),
-	       type_info(pair.first).size);
+	       type_info(pair.first).size,
+	       type_to_string(pair.first).c_str());
 	printf("hidden_cheme_type_desc_data * const %s = &%s_data;\n",
 	       make_type_desc_data_name(pair.second).c_str(),
 	       make_type_desc_data_name(pair.second).c_str());
@@ -2340,7 +2401,6 @@ void print_tup_structs() {
 		}
 	}
 }
-#define printf DO NOT USE THIS
 
 void print_type_desc_datas() {
 	std::list< std::pair<Type, int> > desc_pairs = TypeInstanceManager::all();
@@ -2403,8 +2463,14 @@ void print_header_stuff() {
 	puts("static int double2int(double x) { return (int)x; }");
 	puts("static int char2int(char c) { return c; }");
 	print_type_desc_datas();
+	int anylist_data_id =
+	    TypeInstanceManager::add(TypePackManager::unpack("anylist"));
 	print_tup_structs();
+	printf("struct anylist { %s data; }; ",
+	       make_tup_name(anylist_data_id).c_str());
 }
+
+#define printf DO NOT USE THIS
 
 void print_main_header_stuff() {
 	cheme_printf("int main() {\n");
@@ -2479,8 +2545,10 @@ void add_primitives() {
 	
 }
 
+#ifdef MAIN
 int main() {
 	TypeManager::init();
+	TypeInstanceManager::init();
 	load_cur_token(stdin);
 	std::list<Term> all_terms;
 	cheme_printf_push_body();
@@ -2519,3 +2587,4 @@ int main() {
 	ASSERT(cheme_printf_top_zone_stack.empty(),
 	       "cheme_printf_top_zone_stack NOT empty at end");
 }
+#endif

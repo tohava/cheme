@@ -2,5 +2,10 @@
 
 for OLGA in *.kim; do 
 	echo Compiling $OLGA...
-	../cheme < $OLGA > $OLGA.c  ; gcc $OLGA.c -g -o $OLGA.bin -lm; 
+	if [ "$OLGA" == "simple_read.kim" ]; then
+		../cheme < $OLGA > $OLGA.c  ; gcc $OLGA.c -c -g ; g++ $OLGA.o ../read_no_main.o ../lex.yy.o -o $OLGA.bin -lm;
+	else
+		../cheme < $OLGA > $OLGA.c  ; gcc $OLGA.c -g -o $OLGA.bin -lm; 		
+	fi		 
+
 done

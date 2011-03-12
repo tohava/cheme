@@ -1,0 +1,54 @@
+(decl ((func any) read_term_as_any))
+(decl ((func int) init_read_term_as_any))
+(decl ((func int int) putchar))
+(var  
+ ((ptr anylist) nil)
+ ((func bool bool) mnot (lambda ((bool b)) (if b false true)))
+ ((func any (ptr anylist)) a2l 
+  (lambda ((any a))
+	(any_to (ptr anylist) a)))
+
+ ((func any (ptr anylist) (ptr anylist)) cons
+  (lambda ((any a) ((ptr anylist) b))	
+	(var ((ptr anylist) p (new anylist)))
+	(<- p (pack anylist (tupv a b)))
+	p))
+ 
+ ((func (ptr anylist) any) car 
+  (lambda (((ptr anylist) l))
+	(at (unpack (ind l)) 0)))
+ 
+ ((func (ptr anylist) (ptr anylist)) cdr
+  (lambda (((ptr anylist) l))
+	(at (unpack (ind l)) 1)))
+
+ ((func (func any any) (ptr anylist) (ptr anylist)) map
+  (lambda ( ((func any any) f) 
+			((ptr anylist)  l) )
+	(if (is_null l) nil (cons (f (car l)) (map f (cdr l))))))
+
+ ((func any any) display 
+  (lambda ((any a))
+	(if (any_is char       a)
+		(begin (putchar (char2int (any_to char       a))) unitv)
+    (if (any_is (ptr char) a)
+		(begin 
+		  (var ((ptr char) p (any_to (ptr char) a)))
+		  (while (mnot (char_eq (ind p) '\0'))
+				 (begin
+				   (putchar (char2int (ind p)))
+				   (<- (ref p) (ptr_add p 1)))))
+    (if (any_is (ptr anylist) a)
+		(begin
+		  (putchar 40)
+		  (map (lambda ((any a)) (display a) (display (to_any " "))) 
+			   (any_to (ptr anylist) a))
+		  (putchar 41)
+		  unitv)
+		(begin (display (to_any "<UNDISPLAYABLE>")) unitv))))
+	a)))
+
+(init_read_term_as_any)
+(display (read_term_as_any))
+(display (read_term_as_any))
+(display (read_term_as_any))
