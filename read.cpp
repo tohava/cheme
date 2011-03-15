@@ -47,6 +47,10 @@ struct cheme_type_desc_data;
 #define CHEME_TYPE_ANY_STR \
     "typedef struct { hidden_cheme_type_desc_data *t;  char s["SS1"]; char *d; } any;"
      typedef struct { cheme_type_desc_data *t; char s[ SS2 ]; char *d; } cheme_any;
+
+typedef struct cheme_anylist { struct { cheme_any car; cheme_anylist *cdr; } data; }
+cheme_anylist;
+	 
 typedef cheme_type_desc_data *cheme_type_desc;
 
 extern "C" {
@@ -54,8 +58,10 @@ extern "C" {
 	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000001;
 	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000002;
 }
-cheme_type_desc cheme_type_desc_int = hidden_cheme_type_desc_data00000000;
-cheme_type_desc cheme_type_desc_ptr_char = hidden_cheme_type_desc_data00000001;
+cheme_type_desc
+    cheme_type_desc_int         = hidden_cheme_type_desc_data00000000,
+    cheme_type_desc_ptr_char    = hidden_cheme_type_desc_data00000001,
+    cheme_type_desc_ptr_anylist = hidden_cheme_type_desc_data00000002;
 
 struct ErrorContext {
 	long pos;
@@ -534,11 +540,32 @@ Term read_term(FILE *f, int index) {
 //	printf("read_term: done\n");
 }
 
-extern "C" {
-	cheme_any read_term_as_any() {
-		Term t = read_term(stdin, 0);
-		fprintf(stderr, "read_term_as_any: got term of type %d\n", t.type);
-		cheme_any ret;
+cheme_anylist *convert_term_list_to_anylist(const std::list<Term> &l) {
+	cheme_any convert_term_to_any(const Term &t);
+	std::list<Term>::const_iterator it = l.begin();
+	cheme_anylist *head = NULL;
+	cheme_anylist **p = &head;
+	while (it != l.end()) {
+		*p = new cheme_anylist();
+		(*p)->data.car = convert_term_to_any(*it);
+		(*p)->data.cdr = NULL;
+		p = &((*p)->data.cdr);
+		++it;
+	}
+	return head;
+}
+
+cheme_any anylist_ptr_to_any(cheme_anylist *head) {
+	cheme_any ret;
+	ret.t = cheme_type_desc_ptr_anylist;
+	memcpy(ret.s, &head, sizeof(head));
+	return ret;
+}
+
+cheme_any convert_term_to_any(const Term &t) {
+	cheme_any ret;
+	switch (t.type) {
+	case TERM_TYPE_SINGLE:
 		switch (t.single.type) {
 		case TOKEN_TYPE_INT:
 			ret.t = cheme_type_desc_int;
@@ -553,10 +580,28 @@ extern "C" {
 		default:
 			ASSERT1(false, "read_term_as_any: Unknown token type %d\n", t.single.type);
 		}
-		fprintf(stderr, "read_term_as_any: return any with t %p\n", ret.t);
-		return ret;
+		break;
+	case TERM_TYPE_LIST:
+	{
+		ret = anylist_ptr_to_any(convert_term_list_to_anylist(t.list));
+	}
+	}
+	return ret;
+
+}
+
+extern "C" {
+	cheme_any read_term_as_any() {
+		return convert_term_to_any(read_term(stdin, 0));
 	}
 
+	cheme_any read_all_terms() {
+		std::list<Term> all_terms;
+		for (int i = 0; peep_token(stdin).type != TOKEN_TYPE_EOF; ++i)
+			all_terms.push_back(read_term(stdin, i));
+		return anylist_ptr_to_any(convert_term_list_to_anylist(all_terms));
+	}
+	
 	int init_read_term_as_any() {
 		load_cur_token(stdin);
 		return 0;
