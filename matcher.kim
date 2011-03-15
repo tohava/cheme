@@ -1,5 +1,6 @@
+(decl ((func any) read_all_terms))
+(decl ((func int) init_read_term_as_any))
 (decl ((func int int) putchar))
-(type_pack (tup any (ptr anylist)) anylist)
 (var  
  ((ptr anylist) nil)
  ((func bool bool) mnot (lambda ((bool b)) (if b false true)))
@@ -25,6 +26,12 @@
   (lambda ( ((func any any) f) 
 			((ptr anylist)  l) )
 	(if (is_null l) nil (cons (f (car l)) (map f (cdr l))))))
+
+ ((func (func any any any) any (ptr anylist) (ptr anylist)) mapp
+  (lambda ( ((func any any any) f)
+			(any param)
+			((ptr anylist)  l) )
+	(if (is_null l) nil (cons (f param (car l)) (mapp f param (cdr l))))))
 
  ((func any any) display 
   (lambda ((any a))
@@ -114,8 +121,8 @@
 	  (lambda ((any expr) (any data))
 		(if (is_wild expr)
 			true
-		(if (and (mnot (any_is (ptr anylist) expr))
-				 (mnot (any_is (ptr anylist) data)))
+		(if (or (mnot (any_is (ptr anylist) expr))
+				(mnot (any_is (ptr anylist) data)))
 			(any_compare expr data)
 
 			(begin
@@ -148,11 +155,22 @@
 					(to_any (cons (to_any "if") 
 								  (cons x (cons y (cons (raw (cdr l)) 
 														nil)))))))))
-		(raw (cdr l)))))
-		
-(var (any a (quote (cond (a b) (c d) (e f) (g h) (else i)))))
-(display (to_any "Will transform '"))
-(display a)
-(display (to_any "':\n"))
-(display (cond2if (any_to (ptr anylist) a)))	 
-		 
+		(raw (cdr l))))
+
+	 ((func (func any any) any any) deepmap
+	  (lambda (((func any any) f) (any a))
+		(f (if (any_is (ptr anylist) a)
+			   (begin
+				 (to_any (mapp (lambda ((any f) (any a))
+								 (deepmap (any_to (func any any) f) a))
+							   (to_any f) 
+							   (any_to (ptr anylist) a))))
+			   a)))))
+
+
+
+(init_read_term_as_any)
+(display (deepmap (lambda ((any a)) 
+					(if (match (quote (cond (:b* (? ?)) (else ?))) a)
+						(cond2if (any_to (ptr anylist) a)) 
+						a)) (read_all_terms) ))
