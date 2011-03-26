@@ -1,12 +1,51 @@
-(decl ((func any) read_all_terms))
-(decl ((func int) init_read_term_as_any))
+(decl ((func any) read_all_terms_as_any))
 (decl ((func int int) putchar))
+
 (var  
- ((ptr anylist) nil)
  ((func bool bool) mnot (lambda ((bool b)) (if b false true)))
- ((func any (ptr anylist)) a2l 
-  (lambda ((any a))
-	(any_to (ptr anylist) a)))
+ 
+ ((func int unit) putint 
+  (lambda ((int z))
+	(if (== z 0)
+		(begin (putchar 48) unitv)
+		(begin
+		  (var ((func int unit) worker 
+				(lambda ((int x))
+				  (if (== x 0)
+					  unitv
+					  (begin
+						(var (int z (mod x 10)))
+						(worker (div x 10))
+						(putchar (+ 48 z)) unitv)))))
+		  (worker z)))))
+ ((func (func char unit) (ptr char) unit) str_foreach
+  (lambda (((func char unit) f) 
+		   ((ptr char) s))
+	(while (mnot (char_eq (ind s) '\0'))
+		   (begin
+			 (f (ind s))
+			 (<- (ref s) (ptr_add s 1))))))
+
+ ((func (ptr char) unit) putstr
+  (lambda (((ptr char) s))
+	(str_foreach (lambda ((char c)) (putchar (char2int c)) unitv) s)))
+
+
+ ((func char unit) put_escaped_char
+  (lambda ((char c))
+	(if (char_eq c '\n') (putstr "\\n" ) 
+	(if (char_eq c '\0') (putstr "\\0" )
+	(if (char_eq c '\"') (putstr "\\\"")
+	(if (char_eq c '\\') (putstr "\\\\")
+	               		 (begin (putchar (char2int c)) unitv)))))))
+ 
+ ((func (ptr char) unit) put_escaped_str
+  (lambda (((ptr char) s))
+	(str_foreach put_escaped_char s)))
+	
+ ((ptr anylist) nil)
+ ((func any (ptr anylist)) a2l (lambda ((any a)) (any_to (ptr anylist) a)))
+ ((func any int)           a2i (lambda ((any a)) (any_to int           a)))
 
  ((func any (ptr anylist) (ptr anylist)) cons
   (lambda ((any a) ((ptr anylist) b))	
@@ -35,31 +74,36 @@
 
  ((func any any) display 
   (lambda ((any a))
-	(if (any_is char       a)
-		(begin (putchar (char2int (any_to char       a))) unitv)
-    (if (any_is (ptr char) a)
-		(begin 
-		  (var ((ptr char) p (any_to (ptr char) a)))
-		  (while (mnot (char_eq (ind p) '\0'))
-				 (begin
-				   (putchar (char2int (ind p)))
-				   (<- (ref p) (ptr_add p 1)))))
+	(if (any_is char          a)
+		(begin
+		  (putstr "'") (put_escaped_char (any_to char a)) (putstr "'") 
+		  unitv)
+	(if (any_is (ptr char)    a)
+		(begin
+		  (putstr "\"") (put_escaped_str (any_to (ptr char) a)) (putstr "\"")
+		  unitv)
+    (if (any_is int           a)
+		(begin (putint (any_to int a)) unitv)
+    (if (any_is sym           a)
+		(putstr (sym_str (any_to sym a)))
     (if (any_is (ptr anylist) a)
 		(begin
 		  (putchar 40)
-		  (map (lambda ((any a)) (display a) (display (to_any " "))) 
+		  (map (lambda ((any a)) (display a) (putstr " ") a) 
 			   (any_to (ptr anylist) a))
 		  (putchar 41)
 		  unitv)
-		(begin (display (to_any "<UNDISPLAYABLE>")) unitv))))
+		(begin (putstr "<UNDISPLAYABLE>") unitv))))))
 	a))
+ 
+ ((func any (ptr char)) any2symstr
+  (lambda ((any a))
+	(if (any_is sym a) (sym_str (any_to sym a)) "")))
+  
 
  ((func any (ptr char)) first_word
   (lambda ((any a))
-	(if (any_is (ptr anylist) a)
-		(begin (var ((ptr anylist) l (a2l a)))
-		  (if (any_is (ptr char) (car l)) (any_to (ptr char) (car l)) ""))
-		"")))
+	(if (any_is (ptr anylist) a) (any2symstr (car (a2l a))) "")))
 
  ((func any bool) is_cspecial 
   (lambda ((any a))
@@ -67,16 +111,13 @@
 
  ((func any bool) is_wild
   (lambda ((any a))
-	(and (any_is (ptr char) a)
-		 (begin (var ((ptr char) p (any_to (ptr char) a)))
-           (and
-			(char_eq (ind (ptr_add p 0)) '?' )
-			(char_eq (ind (ptr_add p 1)) '\0'))))))
+	(and (any_is sym a)
+		 (str_eq (any2symstr a) "?"))))
 
- ((func any (ptr char) bool) is_word
+ ((func any (ptr char) bool) is_sym
   (lambda ((any a) ((ptr char) w) )
-	(and (any_is (ptr char) a)
-		 (str_eq (any_to (ptr char) a) w)))) 
+	(and (any_is sym a)
+		 (str_eq (any2symstr a) w)))) 
 
  ((func any bool) is_cspecial_empty
   (lambda ((any a))
@@ -101,9 +142,11 @@
 	 (type_desc_eq (any_type (ref a)) (any_type (ref b)))
 	 (if (any_is (ptr char) a)
 			(str_eq (any_to (ptr char) a) (any_to (ptr char) b))
+     (if (any_is sym a)
+            (sym_eq (any_to sym a) (any_to sym b))
      (if (any_is anylist a)
 			(compare_lists (a2l a) (a2l b))
-	 		(any_eq (ref a) (ref b) ))))))
+	 		(any_eq (ref a) (ref b) )))))))
 
  ((func (func any bool) (ptr anylist) (ptr anylist)) filter
   (lambda ( ((func any bool) f) 
@@ -115,7 +158,53 @@
 )
 
  
-			
+(type_pack (ptr anylist) basic_index)
+(var
+ ((func basic_index) new_basic_index
+  (lambda ()
+	(pack basic_index (cons (to_any 0) nil))))
+ ((func basic_index) new_root_basic_index
+  (lambda ()
+	(pack basic_index nil)))
+ ((func basic_index basic_index) basic_index_next
+  (lambda ((basic_index b))
+	(pack basic_index (cons 
+					   (to_any 
+						(+ 1 (a2i (car (unpack b))))) 
+					   (cdr (unpack b))))))
+ ((func basic_index basic_index) basic_index_in
+  (lambda ((basic_index b))
+	(pack basic_index (cons (to_any 0) (unpack b))))))
+
+(type_pack (ptr (tup any basic_index)) iterm)
+(var
+ ((func iterm any) itt     
+  (lambda ((iterm it)) (at (ind (unpack it)) 0)))
+ ((func iterm basic_index) iti
+  (lambda ((iterm it)) (at (ind (unpack it)) 1)))
+ ((func any basic_index iterm) itv 
+  (lambda ((any a) (basic_index b)) 
+	(var ((ptr (tup any basic_index)) p (new (tup any basic_index))))
+	(<- p (tupv a b))
+	(pack iterm p))))
+
+(var ((func (ptr anylist) (ptr anylist)) terms_to_iterms
+	  (lambda (((ptr anylist) l))
+		(var ((func (ptr anylist) basic_index (ptr anylist)) raw
+			  (lambda (((ptr anylist) l)
+					   (basic_index   b))
+				(if (is_null l) nil
+					(begin
+					  (var (any top (car l)))
+					  (var (any newtop 
+								(if (any_is (ptr anylist) top)
+									(to_any (raw (a2l top) (basic_index_in b)))
+									top)))
+					  (cons (to_any (itv newtop b)) 
+							(raw (cdr l) (basic_index_next b))))))))
+		(raw l (new_basic_index)))))
+					
+	   
 
 (var ((func any any bool) match		   
 	  (lambda ((any expr) (any data))
@@ -150,9 +239,9 @@
 			  (lambda (((ptr anylist) l))
 				(var (any           x (car      (a2l (car l))))
 					 (any           y (car (cdr (a2l (car l))))))
-				(if (is_word x "else") 
+				(if (is_sym x "else") 
 					y 
-					(to_any (cons (to_any "if") 
+					(to_any (cons (quote if)
 								  (cons x (cons y (cons (raw (cdr l)) 
 														nil)))))))))
 		(raw (cdr l))))
@@ -168,9 +257,19 @@
 			   a)))))
 
 
+(var (any all (read_all_terms_as_any)))
+(var ((ptr anylist) 
+	  result 
+	  (any_to (ptr anylist)
+			  (deepmap (lambda ((any a)) 
+						 (var (any cond_expr
+								   (to_any (cons 
+											(quote cond)
+											(any_to (ptr anylist)
+													(quote ((:b* (? ?)) 
+															(else ?))))))))
+						 (if (match cond_expr a)
+							 (cond2if (any_to (ptr anylist) a)) 
+							 a)) all))))
+(map display result)
 
-(init_read_term_as_any)
-(display (deepmap (lambda ((any a)) 
-					(if (match (quote (cond (:b* (? ?)) (else ?))) a)
-						(cond2if (any_to (ptr anylist) a)) 
-						a)) (read_all_terms) ))

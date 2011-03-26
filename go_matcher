@@ -1,0 +1,11 @@
+echo "Compiling matcher..."
+./cheme < matcher.kim > matcher.kim.c
+gcc -g -c matcher.kim.c
+echo "Linking matcher..."
+g++ -g lex.yy.o read_no_main.o matcher.kim.o -o matcher
+# echo "Compiling matcher2..."
+# ./matcher < matcher2.kim > matcher2.kim.nocond
+# ./cheme < matcher2.kim.nocond > matcher2.kim.c
+# gcc -g -c matcher2.kim.c
+# echo "Linking matcher2..."
+# g++ -g lex.yy.o read_no_main.o matcher2.kim.o -o matcher2
