@@ -2,5 +2,7 @@ echo "Compiling cheme compiler..."
 lex lexer.l
 gcc -Wall -g -c  lex.yy.c
 g++ -Wall -g -c -DMAIN=1 read.cpp dummy.cpp
+g++ -Wall -g -c index2pos.cpp -o index2pos.o
 g++ -Wall -g -c read.cpp -o read_no_main.o
 g++ -g lex.yy.o read.o dummy.o -o cheme
+g++ -g lex.yy.o index2pos.o -o index2pos
