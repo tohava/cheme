@@ -629,6 +629,7 @@ std::string error_context_to_string_multi_layer() {
 		str += buf;
 	}
 	str += " < " + first_layer_source + " > tmp";
+	system(str.c_str());
 	f = fopen("tmp","r");
 	int pos = -1;
 	fscanf(f, "%d", &pos);
@@ -2746,7 +2747,16 @@ void add_primitives() {
 }
 
 #ifdef MAIN
-int main() {
+int main(int argc, char **argv) {
+	argc == 1 ||
+    (argc == 5 && !strcmp(argv[1], "--index") &&
+	 !strcmp(argv[3], "--first_layer")) ||
+	    (fprintf(stderr, "Very limited usage\n"), abort(), false);
+	if (argc == 5) {
+		is_first_and_last_layer = false;
+		indices_file = argv[2];
+		first_layer_source = argv[4];
+	}
 	TypeManager::init();
 	TypeInstanceManager::init();
 	init_parsing(stdin);

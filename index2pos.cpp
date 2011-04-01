@@ -24,10 +24,10 @@ int main(int argc, char **argv) {
 	        (int)index.size() - (index.back() == -1 ? 1 : 0) != argc - 1 ||
 	        !std::equal(argv + 1, argv + argc, index.begin(), str_int_eq)))
 	{
-		printf("token: %d\n", token);
-		printf("index: ");
-		for (size_t i = 0; i < index.size(); ++i) printf("%d ", index[i]);
-		printf("\n");
+//		printf("token: %d\n", token);
+//		printf("index: ");
+//		for (size_t i = 0; i < index.size(); ++i) printf("%d ", index[i]);
+//		printf("\n");
 		switch (token) {
 		case OPEN:
 			++index.back();
@@ -45,10 +45,10 @@ int main(int argc, char **argv) {
 		had_close = false;
 		prev_offset = offset;
 	}
-	printf("token: %d\n", token);
-	printf("index: ");
-	for (size_t i = 0; i < index.size(); ++i) printf("%d ", index[i]);
-	printf("\n");
+//	printf("token: %d\n", token);
+//	printf("index: ");
+//	for (size_t i = 0; i < index.size(); ++i) printf("%d ", index[i]);
+//	printf("\n");
 	offset = prev_offset;
 	if (token)
 		printf("%d", offset);
