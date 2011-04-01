@@ -5,3 +5,6 @@ cheme
 *.kim.c
 a.out
 index2pos
+indices
+quote_temp
+tmp
