@@ -2,3 +2,6 @@
 lex.yy.c
 *.o
 cheme
+*.kim.c
+a.out
+index2pos

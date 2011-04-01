@@ -2,7 +2,9 @@
 extern "C" {
 #endif
 
+void yyrestart(FILE *);
 int yylex();
+
 #define OPEN 1
 #define CLOSE 2
 #define NUMBER 3

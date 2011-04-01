@@ -1,23 +1,35 @@
+(type_pack FILE)
+(decl
+ ((func (ptr char) (ptr char) (ptr FILE)) fopen)
+ ((func (ptr FILE) int)                   fclose)
+ ((ptr FILE)                              stdout)
+ ((func int (ptr FILE) int)               putc))
 (decl ((func any) read_all_terms_as_any))
-(decl ((func int int) putchar))
+
 
 (var  
- ((func bool bool) mnot (lambda ((bool b)) (if b false true)))
+ ((ptr FILE)               stdind (fopen "indices" "w"))
+ ((func bool bool)         mnot   (lambda ((bool b)) (if b false true)))
+ ((func any int)           a2i    (lambda ((any a)) (any_to int           a)))
+ ((func any (ptr FILE))    a2f    (lambda ((any a)) (any_to (ptr FILE)    a)))
  
- ((func int unit) putint 
-  (lambda ((int z))
+ ((func int (ptr FILE) unit) putint 
+  (lambda ((int z) 
+		   ((ptr FILE) f))
 	(if (== z 0)
-		(begin (putchar 48) unitv)
+		(begin (putc 48 f) unitv)
 		(begin
-		  (var ((func int unit) worker 
-				(lambda ((int x))
+		  (var ((func int (ptr FILE) unit) worker 
+				(lambda ((int x)
+						 ((ptr FILE) f))
 				  (if (== x 0)
 					  unitv
 					  (begin
 						(var (int z (mod x 10)))
-						(worker (div x 10))
-						(putchar (+ 48 z)) unitv)))))
-		  (worker z)))))
+						(worker (div x 10) f)
+						(putc (+ 48 z) f) unitv)))))
+		  (worker z f)))))
+
  ((func (func char unit) (ptr char) unit) str_foreach
   (lambda (((func char unit) f) 
 		   ((ptr char) s))
@@ -26,26 +38,39 @@
 			 (f (ind s))
 			 (<- (ref s) (ptr_add s 1))))))
 
- ((func (ptr char) unit) putstr
-  (lambda (((ptr char) s))
-	(str_foreach (lambda ((char c)) (putchar (char2int c)) unitv) s)))
+ ((func (func any char unit) any (ptr char) unit) str_foreachp
+  (lambda (((func any char unit) f)
+		   (any param)
+		   ((ptr char) s))
+	(while (mnot (char_eq (ind s) '\0'))
+		   (begin
+			 (f param (ind s))
+			 (<- (ref s) (ptr_add s 1))))))
+
+ ((func (ptr char) (ptr FILE) unit) putstr
+  (lambda (((ptr char) s)
+		   ((ptr FILE) f))
+	(str_foreachp (lambda ((any f) (char c)) 
+					(putc (char2int c) (a2f f)) unitv) (to_any f) s)))
 
 
- ((func char unit) put_escaped_char
-  (lambda ((char c))
-	(if (char_eq c '\n') (putstr "\\n" ) 
-	(if (char_eq c '\0') (putstr "\\0" )
-	(if (char_eq c '\"') (putstr "\\\"")
-	(if (char_eq c '\\') (putstr "\\\\")
-	               		 (begin (putchar (char2int c)) unitv)))))))
+ ((func char (ptr FILE) unit) put_escaped_char
+  (lambda ((char c)
+		   ((ptr FILE) f))
+	(if (char_eq c '\n') (putstr "\\n"  f) 
+	(if (char_eq c '\0') (putstr "\\0"  f)
+	(if (char_eq c '\"') (putstr "\\\"" f)
+	(if (char_eq c '\\') (putstr "\\\\" f)
+	               		 (begin (putc (char2int c) f) unitv)))))))
  
- ((func (ptr char) unit) put_escaped_str
-  (lambda (((ptr char) s))
-	(str_foreach put_escaped_char s)))
+ ((func (ptr char) (ptr FILE) unit) put_escaped_str
+  (lambda (((ptr char) s)
+		   ((ptr FILE) f))
+	(str_foreachp (lambda ((any f) (char c))
+					(put_escaped_char c (a2f f))) (to_any f) s)))
 	
  ((ptr anylist) nil)
  ((func any (ptr anylist)) a2l (lambda ((any a)) (any_to (ptr anylist) a)))
- ((func any int)           a2i (lambda ((any a)) (any_to int           a)))
 
  ((func any (ptr anylist) (ptr anylist)) cons
   (lambda ((any a) ((ptr anylist) b))	
@@ -71,30 +96,6 @@
 			(any param)
 			((ptr anylist)  l) )
 	(if (is_null l) nil (cons (f param (car l)) (mapp f param (cdr l))))))
-
- ((func any any) display 
-  (lambda ((any a))
-	(if (any_is char          a)
-		(begin
-		  (putstr "'") (put_escaped_char (any_to char a)) (putstr "'") 
-		  unitv)
-	(if (any_is (ptr char)    a)
-		(begin
-		  (putstr "\"") (put_escaped_str (any_to (ptr char) a)) (putstr "\"")
-		  unitv)
-    (if (any_is int           a)
-		(begin (putint (any_to int a)) unitv)
-    (if (any_is sym           a)
-		(putstr (sym_str (any_to sym a)))
-    (if (any_is (ptr anylist) a)
-		(begin
-		  (putchar 40)
-		  (map (lambda ((any a)) (display a) (putstr " ") a) 
-			   (any_to (ptr anylist) a))
-		  (putchar 41)
-		  unitv)
-		(begin (putstr "<UNDISPLAYABLE>") unitv))))))
-	a))
  
  ((func any (ptr char)) any2symstr
   (lambda ((any a))
@@ -153,9 +154,8 @@
 			((ptr anylist)   l) )
 	(if (f (car l)) 
 		(cons (car l) (filter f (cdr l)))
-		(filter f (cdr l)))))
+		(filter f (cdr l))))))
 
-)
 
  
 (type_pack (ptr anylist) basic_index)
@@ -174,7 +174,15 @@
 					   (cdr (unpack b))))))
  ((func basic_index basic_index) basic_index_in
   (lambda ((basic_index b))
-	(pack basic_index (cons (to_any 0) (unpack b))))))
+	(pack basic_index (cons (to_any 0) (unpack b)))))
+ ((func basic_index (ptr FILE) unit) display_basic_index 
+  (lambda ((basic_index b)
+		   ((ptr FILE)  f))
+	(decl ((func any (ptr FILE) any) display))
+	(display (to_any (unpack b)) f) 
+	unitv)))
+(var 
+ ((func any basic_index) a2b (lambda ((any a)) (any_to basic_index a))))
 
 (type_pack (ptr (tup any basic_index)) iterm)
 (var
@@ -202,12 +210,55 @@
 									top)))
 					  (cons (to_any (itv newtop b)) 
 							(raw (cdr l) (basic_index_next b))))))))
-		(raw l (new_basic_index)))))
+		(raw l (new_basic_index))))
+	 ((func any iterm) a2it
+	  (lambda ((any a)) (any_to iterm a))))
 					
+(var
+ ((func any (ptr FILE) any) display 
+  (lambda ((any a)
+		   ((ptr FILE) f))
+    (if (any_is iterm         a)
+        (begin 
+		  (display (itt (a2it a)) f)
+		  unitv)
+    (if (any_is basic_index   a)
+        (begin
+          (display_basic_index (a2b a) f)
+		  unitv)
+	(if (any_is char          a)
+		(begin
+		  (putstr "'" f) (put_escaped_char (any_to char a) f) (putstr "'" f) 
+		  unitv)
+	(if (any_is (ptr char)    a)
+		(begin
+		  (putstr "\"" f) 
+		  (put_escaped_str (any_to (ptr char) a) f) 
+		  (putstr "\"" f)
+		  unitv)
+    (if (any_is int           a)
+		(begin (putint (any_to int a) f) unitv)
+    (if (any_is sym           a)
+		(putstr (sym_str (any_to sym a)) f)
+    (if (any_is (ptr anylist) a)
+		(begin
+		  (putc 40 f)
+		  (mapp (lambda ((any f) (any a)) 
+				  (display a (a2f f)) 
+				  (putstr " " (a2f f)) a) 
+				(to_any f) 
+				(any_to (ptr anylist) a))
+		  (putc 41 f)
+		  unitv)
+		(begin (putstr "<UNDISPLAYABLE> of type " f) 
+			   (putstr (type_desc_name (any_type (ref a))) f)
+			   unitv))))))))
+	a)))
 	   
 
 (var ((func any any bool) match		   
-	  (lambda ((any expr) (any data))
+	  (lambda ((any expr) (any data2))
+		(var (any data (if (any_is iterm data2) (itt (a2it data2)) data2)))
 		(if (is_wild expr)
 			true
 		(if (or (mnot (any_is (ptr anylist) expr))
@@ -233,43 +284,56 @@
                   (and (match (car el)          (car dl))
 					   (match (to_any (cdr el)) (to_any (cdr dl))))))))))))
 	 
-	 ((func (ptr anylist) any) cond2if
-	  (lambda (((ptr anylist) l))
-		(var ((func (ptr anylist) any) raw
-			  (lambda (((ptr anylist) l))
-				(var (any           x (car      (a2l (car l))))
-					 (any           y (car (cdr (a2l (car l))))))
-				(if (is_sym x "else") 
-					y 
-					(to_any (cons (quote if)
-								  (cons x (cons y (cons (raw (cdr l)) 
-														nil)))))))))
-		(raw (cdr l))))
+	 ((func any any) cond2if
+	  (lambda ((any it))
+		(var ((func (ptr anylist) basic_index any) raw
+			  (lambda (((ptr anylist) l)
+					   (basic_index   b))
+				(var (any           xi  (car      (a2l (itt (a2it (car l))))))
+					 (any           yi  (car (cdr (a2l (itt (a2it (car l)))))))
+					 (any           xit (itt (a2it xi)))
+					 (any           yit (itt (a2it yi))))
+				(if (is_sym xit "else") 
+					yi 
+					(to_any (itv
+							 (to_any (cons (to_any (itv (quote if) 
+														(new_root_basic_index)))
+										   (cons xi 
+												 (cons yi (cons (raw (cdr l) b) 
+																nil)))))
+							 b))))))
+		(raw (cdr (a2l (itt (a2it it)))) 
+			 (iti (a2it it)))))
 
 	 ((func (func any any) any any) deepmap
 	  (lambda (((func any any) f) (any a))
-		(f (if (any_is (ptr anylist) a)
-			   (begin
-				 (to_any (mapp (lambda ((any f) (any a))
-								 (deepmap (any_to (func any any) f) a))
-							   (to_any f) 
-							   (any_to (ptr anylist) a))))
+		(f (if (any_is (ptr anylist) (itt (a2it a)))
+			   (to_any 
+				(itv (to_any (mapp (lambda ((any f) (any a))
+									 (deepmap (any_to (func any any) f) a))
+								   (to_any f) 
+								   (any_to (ptr anylist) (itt (a2it a)))))
+					 (iti (a2it a))))
 			   a)))))
 
 
-(var (any all (read_all_terms_as_any)))
-(var ((ptr anylist) 
-	  result 
-	  (any_to (ptr anylist)
-			  (deepmap (lambda ((any a)) 
-						 (var (any cond_expr
-								   (to_any (cons 
-											(quote cond)
-											(any_to (ptr anylist)
-													(quote ((:b* (? ?)) 
-															(else ?))))))))
-						 (if (match cond_expr a)
-							 (cond2if (any_to (ptr anylist) a)) 
-							 a)) all))))
-(map display result)
+(var (any all 
+		  (to_any (itv (to_any (terms_to_iterms (a2l (read_all_terms_as_any))))
+					   (new_root_basic_index)))))
 
+(var (iterm 
+	  result 
+	  (a2it 
+	   (deepmap (lambda ((any a)) 
+				  (var (any cond_expr
+									  (to_any (cons 
+											   (quote cond)
+											   (a2l (quote ((:b* (? ?)) 
+															(else ?))))))))
+				  (if (match cond_expr a) (cond2if a) a)) 
+				all))))
+(mapp (lambda ((any f) (any a)) (display a (a2f f))) 
+	  (to_any stdout)
+	  (a2l (itt result)))
+(deepmap (lambda ((any a)) (display (to_any (iti (a2it a))) stdind)) 
+		 (to_any result))
