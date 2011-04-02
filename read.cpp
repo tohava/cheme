@@ -325,6 +325,9 @@ template <int V, class T>
 int fixed_value(const T &) { return V; }
 
 template <class T>
+typename T::const_iterator begin_func(const T &x) { return x.begin(); }
+
+template <class T>
 const T &list_at(const std::list<T> &l, int index) {
 	typename std::list<T>::const_iterator i = l.begin();
 	while(index--) ++i;
@@ -366,6 +369,8 @@ bool same_types(const Type &t1, const Type &t2) {
 #undef CASE
 }
 
+
+
 class SameType {
 public: SameType(const Type &t) : t(t) {}
         bool operator()(const Type &t2) { return same_types(t, t2); } 
@@ -386,6 +391,12 @@ std::string type_to_string(const Type &type) {
 	str += ")";
 	return str;
 }
+
+int type_cmp(const Type &t1, const Type &t2) {
+	return strcmp(type_to_string(t1).c_str(),
+	              type_to_string(t2).c_str());
+}
+
 
 #define TOKEN_TYPE_EOF    0
 #define TOKEN_TYPE_OPEN   1
@@ -466,6 +477,11 @@ std::string term_to_string(const Term &t) {
 	default:
 		ASSERT1(false, "term_to_string: Unknown t.type %d", t.type);
 	}
+}
+
+int term_cmp(const Term &t1, const Term &t2) {
+	return strcmp(term_to_string(t1).c_str(),
+	              term_to_string(t2).c_str());
 }
 
 Token make_simple_token(int type) {
@@ -892,6 +908,13 @@ T filter(const T &values, const FUNC &fun) {
 	return ret;
 }
 
+template <class T, class FUNC>
+bool all(FUNC f, const T &list) {
+	typename T::const_iterator it = list.begin();
+	for (; it != list.end(); ++it) if (!f(it)) return false;
+	return true;
+}
+
 template <class T, class FUNC, class S>
 std::list<S> map(FUNC f, const T &list, S *dummy) {
 	std::list<S> ret;
@@ -1183,8 +1206,7 @@ private:
 	class Compare {
 	public:
 		bool operator()(const Type &t1, const Type &t2)
-		{ return strcmp(type_to_string(t1).c_str(),
-		                type_to_string(t2).c_str()) < 0; }
+		{ return type_cmp(t1, t2) < 0; }
 	};
 	typedef std::map<Type, int, Compare> map_t;
 public:
@@ -2523,17 +2545,32 @@ int handle_term(Term &term) {
 }
 
 #undef printf
-void print_type_desc_data(const std::pair<Type, int> &pair) {
+void print_type_desc_extern(const std::pair<Type, int> &pair) {
 	// skip opaque
 	if (TypePackManager::is_opaque_type_pack(pair.first.name)) return;
-	printf("hidden_cheme_type_desc_data %s_data = {%d,\"%s\"};\n",
-	       make_type_desc_data_name(pair.second).c_str(),
-	       type_info(pair.first).size,
-	       type_to_string(pair.first).c_str());
+//	printf("hidden_cheme_type_desc_data %s_data = {%d,\"%s\"};\n",
+//	       make_type_desc_data_name(pair.second).c_str(),
+//	       type_info(pair.first).size,
+//	       type_to_string(pair.first).c_str());
+	printf("extern hidden_cheme_type_desc_data %s_data;\n",
+	       make_type_desc_data_name(pair.second).c_str());
 	printf("hidden_cheme_type_desc_data * const %s = &%s_data;\n",
 	       make_type_desc_data_name(pair.second).c_str(),
 	       make_type_desc_data_name(pair.second).c_str());
 	       
+}
+
+void print_type_desc_data(FILE *f, const std::pair<Type, int> &pair) {
+	if (TypePackManager::is_opaque_type_pack(pair.first.name)) return;
+	char buf[32];
+	putc('(', f);
+	fputs(type_to_string(pair.first).c_str(), f);
+	putc(' ', f);
+	sprintf(buf, "%d", pair.second); fputs(buf, f);
+	putc(' ', f);
+	sprintf(buf, "%d", type_info(pair.first).size); fputs(buf, f);
+	putc(')', f);
+	putc('\n', f);
 }
 
 void print_tup_or_type_pack(const Type &t, bool *printed) {
@@ -2581,10 +2618,17 @@ void print_tup_structs_and_type_packs() {
 	print_tup_structs_and_type_packs_worker(p);
 }
 
-void print_type_desc_datas() {
+void print_type_descs() {
 	std::list< std::pair<Type, int> > desc_pairs = TypeInstanceManager::all();
+	std::list< std::pair<Type, int> >::iterator it = desc_pairs.begin();
 	std::for_each(desc_pairs.begin(), desc_pairs.end(),
-	              print_type_desc_data);
+	              print_type_desc_extern);
+	FILE *f;
+	f = fopen("types", "w");
+	for (it = desc_pairs.begin(); it != desc_pairs.end(); ++it) {
+		print_type_desc_data(f, *it);
+	}
+	fclose(f);
 }
 
 
@@ -2645,7 +2689,7 @@ void print_header_stuff() {
 	puts("static double int2double(int x) { return (double)x; }");
 	puts("static int double2int(double x) { return (int)x; }");
 	puts("static int char2int(char c) { return c; }");
-	print_type_desc_datas();
+	print_type_descs();
     TypeInstanceManager::add(TypePackManager::unpack("anylist"));
 	print_tup_structs_and_type_packs();
 	// printf("struct anylist { %s data; }; ",
@@ -2747,7 +2791,8 @@ void add_primitives() {
 }
 
 #ifdef MAIN
-int main(int argc, char **argv) {
+
+int compile(int argc, char **argv) {
 	argc == 1 ||
     (argc == 5 && !strcmp(argv[1], "--index") &&
 	 !strcmp(argv[3], "--first_layer")) ||
@@ -2757,6 +2802,7 @@ int main(int argc, char **argv) {
 		indices_file = argv[2];
 		first_layer_source = argv[4];
 	}
+	
 	TypeManager::init();
 	TypeInstanceManager::init();
 	init_parsing(stdin);
@@ -2796,5 +2842,93 @@ int main(int argc, char **argv) {
 	       "cheme_printf_body_zones_stack NOT empty at end");
 	ASSERT(cheme_printf_top_zone_stack.empty(),
 	       "cheme_printf_top_zone_stack NOT empty at end");
+	return 0;
+}
+
+bool merge_types_not_all_at_end
+    (const std::list< std::list<Term> > &lol,
+     const std::list< std::list<Term>::const_iterator > &its)
+{
+	ASSERT2(lol.size() == its.size(),
+	        "merge_types_not_all_at_end: sizes unequal (%d, %d)",
+	        lol.size(), its.size());
+	std::list< std::list<Term> >::const_iterator itl = lol.begin();
+	std::list<std::list<Term>::const_iterator>::const_iterator it = its.begin();
+	for (; it != its.end(); ++itl, ++it)
+		if (*it == itl->end())
+			return false;
+	return true;
+}
+
+#undef printf
+int merge_types(int argc, char **argv) {
+	std::list< std::list<Term> > lol;
+	for (int j = 1; j < argc; ++j) {
+		lol.push_back(std::list<Term>());
+		FILE *f = fopen(argv[j], "r");
+		init_parsing(f);
+		for (int i = 0; peep_token().type != TOKEN_TYPE_EOF; ++i) {
+			lol.back().push_back(read_term(i));
+			fprintf(stderr, "Added %s to list %d\n", term_to_string(lol.back().back()).c_str(), j);
+		}
+		fclose(f);
+	}
+	std::list< std::list<Term>::const_iterator > its =
+	    ::map(begin_func< std::list<Term> > , lol, &its.back());
+	while (merge_types_not_all_at_end(lol, its)) {
+		std::list< std::list<Term>::const_iterator >::iterator
+		    it;
+		std::list< std::list< std::list<Term>::const_iterator >::iterator > itm_list;
+		std::list< std::list<Term> >::const_iterator itl = lol.begin();
+		fprintf(stderr, "Comparing...\n");
+		for (it = its.begin(); it != its.end(); ++it) {
+				const Term &t1 = **it;
+				ASSERT1(t1.type == TERM_TYPE_LIST && t1.list.size() == 3 &&
+				        list_at(t1.list, 1).is_single_int() &&
+				        list_at(t1.list, 2).is_single_int(),
+				        "Invalid term %s", term_to_string(t1).c_str());
+		}
+		for (it = its.begin(); it != its.end(); ++it, ++itl) {
+			if (itl->end() == *it) continue;
+			fprintf(stderr, "Going over %s...\n", term_to_string(**it).c_str());
+			if (itm_list.empty()) itm_list.push_back(its.begin());
+			else {
+				const Term &t1 = **it, &t2 = ***itm_list.begin();
+				int cmp = term_cmp(*t1.list.begin(), *t2.list.begin());
+				if (cmp <= 0) {
+					if (cmp < 0) itm_list.clear();
+					itm_list.push_back(it);
+				}
+			}
+		}
+		fprintf(stderr, "Picked %s\n", term_to_string(***itm_list.begin()).c_str());
+		printf("hidden_cheme_type_desc_data %s_data = {%d,\"%s\"};\n",
+		       make_type_desc_data_name(list_at((***itm_list.begin()).list,
+		                                        1).single.num).c_str(),
+		       list_at((***itm_list.begin()).list, 2).single.num,
+		       term_to_string(list_at((***itm_list.begin()).list, 0)).c_str());
+		for (std::list<
+		       std::list<
+		         std::list<Term>::const_iterator >::iterator>::iterator 
+		     itmi = itm_list.begin(); itmi != itm_list.end(); ++itmi)
+			++(**itmi);
+	}
+	return 0;
+}
+
+int main(int argc, char **argv) {
+	if (argc <= 1) {
+		fprintf(stderr, "Missing command\n");
+		exit(1);
+	}
+	if (strcmp(argv[1], "compile") == 0)
+		return compile(argc - 1, argv + 1);
+	else if (strcmp(argv[1], "merge_types") == 0)
+		return merge_types(argc - 1, argv + 1);
+	else {
+		fprintf(stderr, "Unknown command %s\n", argv[1]);
+		exit(1);
+	}
+	
 }
 #endif
