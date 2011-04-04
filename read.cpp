@@ -42,7 +42,8 @@ extern "C" {
 	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000001;
 	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000002;
 	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000003;
-	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000004;	
+	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000004;
+	extern const int base_type_count;
 }
 cheme_type_desc
     cheme_type_desc_int         = hidden_cheme_type_desc_data00000000,
@@ -50,7 +51,6 @@ cheme_type_desc
     cheme_type_desc_ptr_anylist = hidden_cheme_type_desc_data00000002,
     cheme_type_desc_sym         = hidden_cheme_type_desc_data00000003,
 	cheme_type_desc_char        = hidden_cheme_type_desc_data00000004;
-
 
 bool is_first_and_last_layer = true;
 std::string indices_file = "";
@@ -1233,13 +1233,12 @@ public:
 		return ret;
 	}
 	static void init() {
-		TypeInstanceManager::add(build_base_type("int"));
-		TypeInstanceManager::add(build_uni_poly_type("ptr",
-		                                             build_base_type("char")));
-		TypeInstanceManager::add
-		    (build_uni_poly_type("ptr", build_base_type("anylist")));
-		TypeInstanceManager::add(build_base_type("sym"));
-		TypeInstanceManager::add(build_base_type("char"));
+#define ENTRY(longid, id, expr, size, name) \
+TypeInstanceManager::add(expr);
+#define LASTENTRY ENTRY
+#include "base_types_table.h"
+#undef LASTENTRY
+#undef ENTRY
 	}
 	static map_t map;
 };
@@ -2863,6 +2862,13 @@ bool merge_types_not_all_at_end
 #undef printf
 int merge_types(int argc, char **argv) {
 	std::list< std::list<Term> > lol;
+	std::list<FILE *> replace_tables;
+	for (int j = 2; j < argc; ++j) {
+		char buf[256];
+		sprintf(buf, "replace_table_%08d", j - 1);
+		replace_tables.push_back(fopen(buf, "w"));
+	}
+		
 	for (int j = 1; j < argc; ++j) {
 		lol.push_back(std::list<Term>());
 		FILE *f = fopen(argv[j], "r");
@@ -2879,6 +2885,7 @@ int merge_types(int argc, char **argv) {
 		std::list< std::list<Term>::const_iterator >::iterator
 		    it;
 		std::list< std::list< std::list<Term>::const_iterator >::iterator > itm_list;
+		std::list<int> itmi_list;
 		std::list< std::list<Term> >::const_iterator itl = lol.begin();
 		fprintf(stderr, "Comparing...\n");
 		for (it = its.begin(); it != its.end(); ++it) {
@@ -2888,16 +2895,19 @@ int merge_types(int argc, char **argv) {
 				        list_at(t1.list, 2).is_single_int(),
 				        "Invalid term %s", term_to_string(t1).c_str());
 		}
-		for (it = its.begin(); it != its.end(); ++it, ++itl) {
+		int i = 0;
+		for (it = its.begin(); it != its.end(); ++i, ++it, ++itl) {
 			if (itl->end() == *it) continue;
 			fprintf(stderr, "Going over %s...\n", term_to_string(**it).c_str());
-			if (itm_list.empty()) itm_list.push_back(its.begin());
-			else {
+			if (itm_list.empty()) {
+				itm_list.push_back(its.begin());
+				itmi_list.push_back(i);
+			} else {
 				const Term &t1 = **it, &t2 = ***itm_list.begin();
 				int cmp = term_cmp(*t1.list.begin(), *t2.list.begin());
 				if (cmp <= 0) {
-					if (cmp < 0) itm_list.clear();
-					itm_list.push_back(it);
+					if (cmp < 0) { itm_list.clear(); itmi_list.clear(); }
+					itm_list.push_back(it); itmi_list.push_back(i);
 				}
 			}
 		}
@@ -2910,8 +2920,12 @@ int merge_types(int argc, char **argv) {
 		for (std::list<
 		       std::list<
 		         std::list<Term>::const_iterator >::iterator>::iterator 
-		     itmi = itm_list.begin(); itmi != itm_list.end(); ++itmi)
-			++(**itmi);
+		     itm_it = itm_list.begin(); itm_it != itm_list.end(); ++itm_it)
+			++(**itm_it);
+		std::list<int>::iterator itmi_iter = itmi_list.begin();
+		for ( ; itmi_iter != itmi_list.end(); ++itmi_iter) {
+			
+		}
 	}
 	return 0;
 }
