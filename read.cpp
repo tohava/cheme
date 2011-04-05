@@ -2863,7 +2863,7 @@ bool merge_types_not_all_at_end
 int merge_types(int argc, char **argv) {
 	std::list< std::list<Term> > lol;
 	std::list<FILE *> replace_tables;
-	for (int j = 2; j < argc; ++j) {
+	for (int j = 1; j < argc; ++j) {
 		char buf[256];
 		sprintf(buf, "replace_table_%08d", j - 1);
 		replace_tables.push_back(fopen(buf, "w"));
@@ -2879,53 +2879,57 @@ int merge_types(int argc, char **argv) {
 		}
 		fclose(f);
 	}
-	std::list< std::list<Term>::const_iterator > its =
-	    ::map(begin_func< std::list<Term> > , lol, &its.back());
-	while (merge_types_not_all_at_end(lol, its)) {
-		std::list< std::list<Term>::const_iterator >::iterator
-		    it;
-		std::list< std::list< std::list<Term>::const_iterator >::iterator > itm_list;
-		std::list<int> itmi_list;
+	std::list< std::list<Term>::const_iterator > it_lst =
+	    ::map(begin_func< std::list<Term> > , lol, &it_lst.back());
+	while (merge_types_not_all_at_end(lol, it_lst)) {
+		std::list<std::list<Term>::const_iterator>::iterator it2;
+		std::list<std::list<std::list<Term>::const_iterator>::iterator> it2_lst;
+		std::list<FILE *> it3_tbls_lst;
 		std::list< std::list<Term> >::const_iterator itl = lol.begin();
 		fprintf(stderr, "Comparing...\n");
-		for (it = its.begin(); it != its.end(); ++it) {
-				const Term &t1 = **it;
+		for (it2 = it_lst.begin(); it2 != it_lst.end(); ++it2) {
+				const Term &t1 = **it2;
 				ASSERT1(t1.type == TERM_TYPE_LIST && t1.list.size() == 3 &&
 				        list_at(t1.list, 1).is_single_int() &&
 				        list_at(t1.list, 2).is_single_int(),
 				        "Invalid term %s", term_to_string(t1).c_str());
 		}
-		int i = 0;
-		for (it = its.begin(); it != its.end(); ++i, ++it, ++itl) {
-			if (itl->end() == *it) continue;
-			fprintf(stderr, "Going over %s...\n", term_to_string(**it).c_str());
-			if (itm_list.empty()) {
-				itm_list.push_back(its.begin());
-				itmi_list.push_back(i);
+		std::list<FILE *>::iterator tbls_it = replace_tables.begin();
+		for (it2 = it_lst.begin(); it2 != it_lst.end();
+		     ++tbls_it, ++it2, ++itl)
+		{
+			if (itl->end() == *it2) continue;
+			fprintf(stderr, "Going over %s...\n", term_to_string(**it2).c_str());
+			if (it2_lst.empty()) {
+				it2_lst.push_back(it_lst.begin());
+				it3_tbls_lst.push_back(*tbls_it);
 			} else {
-				const Term &t1 = **it, &t2 = ***itm_list.begin();
+				const Term &t1 = **it2, &t2 = ***it2_lst.begin();
 				int cmp = term_cmp(*t1.list.begin(), *t2.list.begin());
 				if (cmp <= 0) {
-					if (cmp < 0) { itm_list.clear(); itmi_list.clear(); }
-					itm_list.push_back(it); itmi_list.push_back(i);
+					if (cmp < 0) { it2_lst.clear(); it3_tbls_lst.clear(); }
+					it2_lst.push_back(it2); it3_tbls_lst.push_back(*tbls_it);
 				}
 			}
 		}
-		fprintf(stderr, "Picked %s\n", term_to_string(***itm_list.begin()).c_str());
+		fprintf(stderr, "Picked %s\n", term_to_string(***it2_lst.begin()).c_str());
 		printf("hidden_cheme_type_desc_data %s_data = {%d,\"%s\"};\n",
-		       make_type_desc_data_name(list_at((***itm_list.begin()).list,
+		       make_type_desc_data_name(list_at((***it2_lst.begin()).list,
 		                                        1).single.num).c_str(),
-		       list_at((***itm_list.begin()).list, 2).single.num,
-		       term_to_string(list_at((***itm_list.begin()).list, 0)).c_str());
-		for (std::list<
-		       std::list<
-		         std::list<Term>::const_iterator >::iterator>::iterator 
-		     itm_it = itm_list.begin(); itm_it != itm_list.end(); ++itm_it)
-			++(**itm_it);
-		std::list<int>::iterator itmi_iter = itmi_list.begin();
-		for ( ; itmi_iter != itmi_list.end(); ++itmi_iter) {
-			
+		       list_at((***it2_lst.begin()).list, 2).single.num,
+		       term_to_string(list_at((***it2_lst.begin()).list, 0)).c_str());
+		std::list<std::list<
+		  std::list<Term>::const_iterator >::iterator>::iterator it3 =
+		    it2_lst.begin();
+		tbls_it = it3_tbls_lst.begin();
+		for (++it3, ++tbls_it ; tbls_it != it3_tbls_lst.end(); ++tbls_it) {
+			int type_index0 = list_at((***it2_lst.begin()).list, 1).single.num;
+			int type_index = list_at((***it3).list, 1).single.num;
+			if (type_index != type_index0)
+				fprintf(*tbls_it, "(%d %d)", type_index, type_index0);
 		}
+		for (it3 = it2_lst.begin(); it3 != it2_lst.end(); ++it3)
+			++(**it3);
 	}
 	return 0;
 }
