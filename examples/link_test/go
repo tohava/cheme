@@ -1,0 +1,4 @@
+../../cheme compile < part1.kim > part1.kim.c; mv types part1.kim.types
+../../cheme compile < part2.kim > part2.kim.c; mv types part2.kim.types
+../../cheme merge_types part[12].kim.types > hidden_cheme_types.c 
+gcc -c part1.kim.c part2.kim.c

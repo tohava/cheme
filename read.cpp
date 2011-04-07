@@ -98,9 +98,12 @@ std::string make_temp_name(int temp_index) {
 	return std::string(buf);
 }
 
+#define CHEME_TYPE_DESC_VAR_PREFIX "hidden_cheme_type_desc_data"
+#define TYPE_DESC_NUM_LEN 8
+#define TYPE_DESC_NUM_LEN_STR "8"
 std::string make_type_desc_data_name(int index) {
 	char buf[80];
-	sprintf(buf, "hidden_cheme_type_desc_data%08d", index);
+	sprintf(buf, CHEME_TYPE_DESC_VAR_PREFIX"%0"TYPE_DESC_NUM_LEN_STR"d", index);
 	return std::string(buf);
 }
 
@@ -239,7 +242,7 @@ char *cheme_printf_pop() {
 	       "cheme_printf_pop: cannot pop from an empty stack");
 	cheme_printf_context cur = cheme_printf_get_current_stack()->top();
 	cheme_printf_get_current_stack()->pop();
-	return cur.buf_origin;
+	return cur.buf_origin == NULL ? strdup("") : cur.buf_origin;
 }
 
 
@@ -2854,9 +2857,9 @@ bool merge_types_not_all_at_end
 	std::list< std::list<Term> >::const_iterator itl = lol.begin();
 	std::list<std::list<Term>::const_iterator>::const_iterator it = its.begin();
 	for (; it != its.end(); ++itl, ++it)
-		if (*it == itl->end())
-			return false;
-	return true;
+		if (*it != itl->end())
+			return true;
+	return false;
 }
 
 #undef printf
@@ -2879,6 +2882,24 @@ int merge_types(int argc, char **argv) {
 		}
 		fclose(f);
 	}
+	
+	int non_1st_lst_ind = 0; // index to be used for types not appearing
+	                         // in lol.begin(), initialied to max id of
+	                         // lol.begin() plus one.
+	for (std::list<Term>::const_iterator it = lol.begin()->begin();
+	     it != lol.begin()->end(); ++it)
+	{
+		const Term &t1 = *it;
+		ASSERT1(t1.type == TERM_TYPE_LIST && t1.list.size() >= 2 &&
+		        list_at(t1.list, 1).is_single_int(),
+		        "Invalid term %s in first types file",
+		       term_to_string(t1).c_str());
+		int id = list_at(t1.list, 1).single.num;
+		if (non_1st_lst_ind < id) non_1st_lst_ind = id;
+	}
+	++non_1st_lst_ind;
+		 
+	     
 	std::list< std::list<Term>::const_iterator > it_lst =
 	    ::map(begin_func< std::list<Term> > , lol, &it_lst.back());
 	while (merge_types_not_all_at_end(lol, it_lst)) {
@@ -2887,21 +2908,22 @@ int merge_types(int argc, char **argv) {
 		std::list<FILE *> it3_tbls_lst;
 		std::list< std::list<Term> >::const_iterator itl = lol.begin();
 		fprintf(stderr, "Comparing...\n");
-		for (it2 = it_lst.begin(); it2 != it_lst.end(); ++it2) {
-				const Term &t1 = **it2;
-				ASSERT1(t1.type == TERM_TYPE_LIST && t1.list.size() == 3 &&
-				        list_at(t1.list, 1).is_single_int() &&
-				        list_at(t1.list, 2).is_single_int(),
-				        "Invalid term %s", term_to_string(t1).c_str());
+		for (it2 = it_lst.begin(); it2 != it_lst.end(); ++it2, ++itl) {
+			if (itl->end() == *it2) continue;
+			const Term &t1 = **it2;
+			ASSERT1(t1.type == TERM_TYPE_LIST && t1.list.size() == 3 &&
+			        list_at(t1.list, 1).is_single_int() &&
+			        list_at(t1.list, 2).is_single_int(),
+			        "Invalid term %s", term_to_string(t1).c_str());
 		}
 		std::list<FILE *>::iterator tbls_it = replace_tables.begin();
-		for (it2 = it_lst.begin(); it2 != it_lst.end();
+		for (it2 = it_lst.begin(), itl = lol.begin(); it2 != it_lst.end();
 		     ++tbls_it, ++it2, ++itl)
 		{
 			if (itl->end() == *it2) continue;
 			fprintf(stderr, "Going over %s...\n", term_to_string(**it2).c_str());
 			if (it2_lst.empty()) {
-				it2_lst.push_back(it_lst.begin());
+				it2_lst.push_back(it2);
 				it3_tbls_lst.push_back(*tbls_it);
 			} else {
 				const Term &t1 = **it2, &t2 = ***it2_lst.begin();
@@ -2912,10 +2934,15 @@ int merge_types(int argc, char **argv) {
 				}
 			}
 		}
-		fprintf(stderr, "Picked %s\n", term_to_string(***it2_lst.begin()).c_str());
+		const bool type_in_1st_lst = *it2_lst.begin() == it_lst.begin();
+		fprintf(stderr, "Picked %s, type %s in first list\n",
+		        term_to_string(***it2_lst.begin()).c_str(),
+		        type_in_1st_lst ? "is" : "is not");
+		int unified_type_index = type_in_1st_lst
+		    ? list_at((***it2_lst.begin()).list, 1).single.num
+		    : non_1st_lst_ind++;
 		printf("hidden_cheme_type_desc_data %s_data = {%d,\"%s\"};\n",
-		       make_type_desc_data_name(list_at((***it2_lst.begin()).list,
-		                                        1).single.num).c_str(),
+		       make_type_desc_data_name(unified_type_index).c_str(),
 		       list_at((***it2_lst.begin()).list, 2).single.num,
 		       term_to_string(list_at((***it2_lst.begin()).list, 0)).c_str());
 		std::list<std::list<
@@ -2923,14 +2950,66 @@ int merge_types(int argc, char **argv) {
 		    it2_lst.begin();
 		tbls_it = it3_tbls_lst.begin();
 		for (++it3, ++tbls_it ; tbls_it != it3_tbls_lst.end(); ++tbls_it) {
-			int type_index0 = list_at((***it2_lst.begin()).list, 1).single.num;
 			int type_index = list_at((***it3).list, 1).single.num;
-			if (type_index != type_index0)
-				fprintf(*tbls_it, "(%d %d)", type_index, type_index0);
+			if (type_index != unified_type_index)
+				fprintf(*tbls_it, "(%d %d)", type_index, unified_type_index);
 		}
 		for (it3 = it2_lst.begin(); it3 != it2_lst.end(); ++it3)
 			++(**it3);
 	}
+	return 0;
+}
+
+std::map<int, int> build_subst_map(char *filename) {
+	FILE *f = fopen(filename, "r");
+	std::map<int, int> ret;
+	init_parsing(f);
+	while (peep_token().type != TOKEN_TYPE_EOF) {
+		Term term = read_term(0);
+		Term first, second;
+		ASSERT1(term.type == TERM_TYPE_LIST &&
+		        term.list.size() == 2 &&
+		        (first = list_at(term.list, 0)).is_single_int() &&
+		        (second = list_at(term.list, 1)).is_single_int(),
+		        "Malformed termed '%s' in substitution table",
+		        term_to_string(term).c_str());
+		ret[first.single.num] = second.single.num;
+	}
+	return ret;
+}
+
+int patch_obj_types(int argc, char **argv) {
+	argc == 3 ||
+	    (fprintf(stderr, "Very limited usage\n"), abort(), false);
+	FILE *obj_file = fopen(argv[1], "r+b");
+	std::map<int, int> subst_map = build_subst_map(argv[2]);
+	const int prefix_len = sizeof(CHEME_TYPE_DESC_VAR_PREFIX);
+	const int len = (int)make_type_desc_data_name(0).size();
+	ASSERT(len - prefix_len == TYPE_DESC_NUM_LEN,
+	       "patch_obj_types: length const mismatch");
+	std::auto_ptr<char> ap(new char[len]);
+	char *p0 = ap.get();
+	char * const plim = p0 + len;
+	fread(p0, len, 1, obj_file);
+#define CYCP(O) ( (p0 + O >= plim) ? (p0 + O + (p0 - plim)) : (p0 + O) )
+	while (1) {
+		if (memcmp(CHEME_TYPE_DESC_VAR_PREFIX, p0, prefix_len) == 0) {
+			int num; sscanf(CYCP(prefix_len), "%d", &num);
+			int new_num;
+			if (subst_map.find(num) != subst_map.end()) {
+				new_num = subst_map[num];
+				sprintf(CYCP(prefix_len),
+				        "%0"TYPE_DESC_NUM_LEN_STR"d", new_num);
+			}
+		}
+		fseek(obj_file, -len, SEEK_CUR);
+		fputc(*p0, obj_file);
+		int c = fgetc(obj_file);
+		if (c == EOF)
+			break;
+		*p0 = c;
+	}
+#undef CYCP
 	return 0;
 }
 
@@ -2943,6 +3022,8 @@ int main(int argc, char **argv) {
 		return compile(argc - 1, argv + 1);
 	else if (strcmp(argv[1], "merge_types") == 0)
 		return merge_types(argc - 1, argv + 1);
+	else if (strcmp(argv[1], "patch_obj_types") == 0)
+		return patch_obj_types(argc - 1, argv + 1);
 	else {
 		fprintf(stderr, "Unknown command %s\n", argv[1]);
 		exit(1);

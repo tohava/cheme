@@ -1,0 +1,15 @@
+(type_pack (tup int int int) pt3)
+(type_pack (tup int int)     pt2)
+(var ((func any int) pt_abs
+	  (lambda ((any a))
+		(if (any_is pt2 a) 
+			(begin
+			  (var ((tup int int) p (unpack (any_to pt2 a))))
+			  (+ (* (at p 0) (at p 0))
+				 (* (at p 1) (at p 1))))
+			(begin
+			  (var ((tup int int int) p (unpack (any_to pt3 a))))
+			  (+ (* (at p 0) (at p 0))
+				 (+ (* (at p 1) (at p 1))
+					(* (at p 2) (at p 2)))))))))
+				   
