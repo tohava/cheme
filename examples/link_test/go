@@ -2,3 +2,8 @@
 ../../cheme compile < part2.kim > part2.kim.c; mv types part2.kim.types
 ../../cheme merge_types part[12].kim.types > hidden_cheme_types.c 
 gcc -c part1.kim.c part2.kim.c
+cp part1.kim.o part1.kim.o.unpatched
+cp part2.kim.o part2.kim.o.unpatched
+../../cheme patch_obj_types part1.kim.o replace_table_00000000
+../../cheme patch_obj_types part2.kim.o replace_table_00000001
+gcc part1.kim.o part2.kim.o

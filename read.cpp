@@ -2983,7 +2983,7 @@ int patch_obj_types(int argc, char **argv) {
 	    (fprintf(stderr, "Very limited usage\n"), abort(), false);
 	FILE *obj_file = fopen(argv[1], "r+b");
 	std::map<int, int> subst_map = build_subst_map(argv[2]);
-	const int prefix_len = sizeof(CHEME_TYPE_DESC_VAR_PREFIX);
+	const int prefix_len = sizeof(CHEME_TYPE_DESC_VAR_PREFIX) - 1;
 	const int len = (int)make_type_desc_data_name(0).size();
 	ASSERT(len - prefix_len == TYPE_DESC_NUM_LEN,
 	       "patch_obj_types: length const mismatch");
@@ -2991,23 +2991,41 @@ int patch_obj_types(int argc, char **argv) {
 	char *p0 = ap.get();
 	char * const plim = p0 + len;
 	fread(p0, len, 1, obj_file);
-#define CYCP(O) ( (p0 + O >= plim) ? (p0 + O + (p0 - plim)) : (p0 + O) )
+#define CYCP(O) ( (p0 + O >= plim) ? (p0 + O - len) : (p0 + O) )
 	while (1) {
-		if (memcmp(CHEME_TYPE_DESC_VAR_PREFIX, p0, prefix_len) == 0) {
-			int num; sscanf(CYCP(prefix_len), "%d", &num);
+		const int prefix_len_for_cmp1 =
+		    prefix_len < plim - p0 ? prefix_len : plim - p0;
+		const int prefix_len_for_cmp2 = prefix_len - prefix_len_for_cmp1;
+		if (memcmp(CHEME_TYPE_DESC_VAR_PREFIX, p0, prefix_len_for_cmp1) == 0 &&
+		    memcmp(CHEME_TYPE_DESC_VAR_PREFIX + prefix_len_for_cmp1,
+			       CYCP(prefix_len_for_cmp1), prefix_len_for_cmp2) == 0)
+		{
+			char numstr[TYPE_DESC_NUM_LEN + 1];
+			for (int i = 0; i < TYPE_DESC_NUM_LEN; ++i)
+				numstr[i] = *CYCP(prefix_len + i);
+			numstr[TYPE_DESC_NUM_LEN] = '\0';
+			int num; sscanf(numstr, "%08d", &num);
 			int new_num;
 			if (subst_map.find(num) != subst_map.end()) {
 				new_num = subst_map[num];
-				sprintf(CYCP(prefix_len),
+				sprintf(numstr,
 				        "%0"TYPE_DESC_NUM_LEN_STR"d", new_num);
+				for (int i = 0; i < TYPE_DESC_NUM_LEN; ++i)
+					*CYCP(prefix_len + i) = numstr[i];
 			}
 		}
 		fseek(obj_file, -len, SEEK_CUR);
+		printf("Writing at %ld\n", ftell(obj_file));
+		if (ftell(obj_file) == 0x21) {
+			int x = 2785;
+		}
 		fputc(*p0, obj_file);
+		fseek(obj_file, len - 1, SEEK_CUR);
 		int c = fgetc(obj_file);
 		if (c == EOF)
 			break;
 		*p0 = c;
+		p0 = CYCP(1);
 	}
 #undef CYCP
 	return 0;
