@@ -3,5 +3,6 @@
 
 (decl ((func any int) pt_abs))
 (decl ((func int int) putchar))
-(if (== (pt_abs (to_any (pack pt2 (tupv 1 3)))) 10)   (char2int 'V') (char2int 'X'))
-(if (== (pt_abs (to_any (pack pt3 (tupv 1 3 5)))) 35) (char2int 'V') (char2int 'X'))
+(putchar (if (== (pt_abs (to_any (pack pt2 (tupv 1 3)))) 10)   (char2int 'V') (char2int 'X')))
+(putchar (if (== (pt_abs (to_any (pack pt3 (tupv 1 3 5)))) 35) (char2int 'V') (char2int 'X')))
+(putchar 10)

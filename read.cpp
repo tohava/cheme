@@ -2556,7 +2556,7 @@ void print_type_desc_extern(const std::pair<Type, int> &pair) {
 //	       type_to_string(pair.first).c_str());
 	printf("extern hidden_cheme_type_desc_data %s_data;\n",
 	       make_type_desc_data_name(pair.second).c_str());
-	printf("hidden_cheme_type_desc_data * const %s = &%s_data;\n",
+	printf("static hidden_cheme_type_desc_data * const %s = &%s_data;\n",
 	       make_type_desc_data_name(pair.second).c_str(),
 	       make_type_desc_data_name(pair.second).c_str());
 	       
@@ -2633,11 +2633,14 @@ void print_type_descs() {
 	fclose(f);
 }
 
-
-void print_header_stuff() {
+void print_rtti_typedefs() {
 	puts("typedef struct { int size; char *name; } "
 	     "hidden_cheme_type_desc_data;");
 	puts("typedef hidden_cheme_type_desc_data *type_desc;");
+}
+
+void print_header_stuff() {
+	print_rtti_typedefs();
 	puts(CHEME_TYPE_BOOL_STR);
 	puts(CHEME_TYPE_UNIT_STR);
 	puts("static unit unitv() { unit v; return v; }");
@@ -2678,7 +2681,7 @@ void print_header_stuff() {
 	     "{ return x * y; }");
 	puts("static int "HIDDEN_CHEME_CMP_INTS"(int x, int y) "
 	     "{ return x == y; }");
-	puts("static bool any_eq(any *a, any *b) "
+	puts("static bool any_eq(any *a, any *b)\n"
 	     "{ if ("HIDDEN_CHEME_ANY_TYPE"(a) != "HIDDEN_CHEME_ANY_TYPE"(b))\n"
 	     "    return false;\n"
 	     "  if ("HIDDEN_CHEME_ANY_SIZE"(a) <= "ANY_SIZE_THRESHOLD_STR")\n"
@@ -2691,6 +2694,8 @@ void print_header_stuff() {
 	puts("static double int2double(int x) { return (double)x; }");
 	puts("static int double2int(double x) { return (int)x; }");
 	puts("static int char2int(char c) { return c; }");
+	puts("static char *sym_str(sym s) { return s.str; }");
+	puts("static bool sym_eq(sym s, sym t) { return !strcmp(s.str, t.str); }");
 	print_type_descs();
     TypeInstanceManager::add(TypePackManager::unpack("anylist"));
 	print_tup_structs_and_type_packs();
@@ -2700,15 +2705,22 @@ void print_header_stuff() {
 	puts("void *memcpy(void *dest, const void *src, long n);");
 	puts("int printf(const char *, ...);");
 	puts("any read_term_from_str(char *);");
-	puts("char *sym_str(sym s) { return s.str; }");
-	puts("bool sym_eq(sym s, sym t) { return !strcmp(s.str, t.str); }");
 	puts("#define NULL 0");
 }
 
 #define printf DO NOT USE THIS
 
 void print_main_header_stuff() {
-	cheme_printf("int main() {\n");
+	system("uuidgen > tmp");
+	FILE *f = fopen("tmp", "r");
+	char str[256];
+	str[fread(str, 1, 27852785, f) - 1] = '\0';
+	for (char *p = str; *p; ++p) *p = (*p == '-') ? '_' : *p;
+	fclose(f);
+	cheme_printf("int hidden_cheme_main_%s() {\n", str);
+	f = fopen("main", "w");
+	fprintf(f, "hidden_cheme_main_%s", str);
+	fclose(f);
 }
 
 void print_footer_stuff() {
@@ -2899,7 +2911,8 @@ int merge_types(int argc, char **argv) {
 	}
 	++non_1st_lst_ind;
 		 
-	     
+
+	print_rtti_typedefs();
 	std::list< std::list<Term>::const_iterator > it_lst =
 	    ::map(begin_func< std::list<Term> > , lol, &it_lst.back());
 	while (merge_types_not_all_at_end(lol, it_lst)) {
@@ -2957,6 +2970,19 @@ int merge_types(int argc, char **argv) {
 		for (it3 = it2_lst.begin(); it3 != it2_lst.end(); ++it3)
 			++(**it3);
 	}
+	return 0;
+}
+
+int merge_mains(int argc, char **argv) {
+	puts("int main() {");
+	for (int i = 1; i < argc; ++i) {
+		FILE *f = fopen(argv[i], "r");
+		char buf[512];
+		fread(buf, 1, 512, f);
+		printf("%s();\n", buf);
+		fclose(f);
+	}
+	puts("}");
 	return 0;
 }
 
@@ -3040,6 +3066,8 @@ int main(int argc, char **argv) {
 		return compile(argc - 1, argv + 1);
 	else if (strcmp(argv[1], "merge_types") == 0)
 		return merge_types(argc - 1, argv + 1);
+	else if (strcmp(argv[1], "merge_mains") == 0)
+		return merge_mains(argc - 1, argv + 1);
 	else if (strcmp(argv[1], "patch_obj_types") == 0)
 		return patch_obj_types(argc - 1, argv + 1);
 	else {

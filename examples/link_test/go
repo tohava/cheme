@@ -1,9 +1,10 @@
-../../cheme compile < part1.kim > part1.kim.c; mv types part1.kim.types
-../../cheme compile < part2.kim > part2.kim.c; mv types part2.kim.types
+../../cheme compile < part1.kim > part1.kim.c; mv types part1.kim.types; mv main part1.kim.main
+../../cheme compile < part2.kim > part2.kim.c; mv types part2.kim.types; mv main part2.kim.main
 ../../cheme merge_types part[12].kim.types > hidden_cheme_types.c 
-gcc -c part1.kim.c part2.kim.c
+../../cheme merge_mains part[12].kim.main > hidden_cheme_mains.c
+gcc -g  -c part1.kim.c part2.kim.c
 cp part1.kim.o part1.kim.o.unpatched
 cp part2.kim.o part2.kim.o.unpatched
 ../../cheme patch_obj_types part1.kim.o replace_table_00000000
 ../../cheme patch_obj_types part2.kim.o replace_table_00000001
-gcc part1.kim.o part2.kim.o
+gcc -g  part1.kim.o part2.kim.o hidden_cheme_types.c hidden_cheme_mains.c
