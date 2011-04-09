@@ -38,19 +38,19 @@
 
 
 extern "C" {
-	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000000;
-	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000001;
-	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000002;
-	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000003;
-	extern cheme_type_desc_data *hidden_cheme_type_desc_data00000004;
 	extern const int base_type_count;
+	extern cheme_type_desc_data hidden_cheme_type_desc_data00000000_data;
+	extern cheme_type_desc_data hidden_cheme_type_desc_data00000001_data;
+	extern cheme_type_desc_data hidden_cheme_type_desc_data00000002_data;
+	extern cheme_type_desc_data hidden_cheme_type_desc_data00000003_data;
+	extern cheme_type_desc_data hidden_cheme_type_desc_data00000004_data;
 }
 cheme_type_desc
-    cheme_type_desc_int         = hidden_cheme_type_desc_data00000000,
-    cheme_type_desc_ptr_char    = hidden_cheme_type_desc_data00000001,
-    cheme_type_desc_ptr_anylist = hidden_cheme_type_desc_data00000002,
-    cheme_type_desc_sym         = hidden_cheme_type_desc_data00000003,
-	cheme_type_desc_char        = hidden_cheme_type_desc_data00000004;
+    cheme_type_desc_int         = &hidden_cheme_type_desc_data00000000_data,
+    cheme_type_desc_ptr_char    = &hidden_cheme_type_desc_data00000001_data,
+    cheme_type_desc_ptr_anylist = &hidden_cheme_type_desc_data00000002_data,
+    cheme_type_desc_sym         = &hidden_cheme_type_desc_data00000003_data,
+	cheme_type_desc_char        = &hidden_cheme_type_desc_data00000004_data;
 
 bool is_first_and_last_layer = true;
 std::string indices_file = "";
@@ -1849,8 +1849,8 @@ int try_or_term (Term &term) { return try_and_term_or_term(term, true);  }
 int try_var_ref_term(Term &term) {
 	if (term.is_single_word())
 	{
-		ASSERT(FunctionManager::accessible(term.single.str),
-		       "Cannot access variable, or it does not exist");
+		ASSERT1(FunctionManager::accessible(term.single.str),
+		        "Cannot access variable %s, or it does not exist", term.single.str.c_str());
 		const Type &type = FunctionManager::type(term.single.str);
 		std::string next_temp = get_next_temp();
 		cheme_printf("%s = %s;\n",
@@ -3041,10 +3041,10 @@ int patch_obj_types(int argc, char **argv) {
 			}
 		}
 		fseek(obj_file, -len, SEEK_CUR);
-		printf("Writing at %ld\n", ftell(obj_file));
-		if (ftell(obj_file) == 0x21) {
-			int x = 2785;
-		}
+//		printf("Writing at %ld\n", ftell(obj_file));
+//		if (ftell(obj_file) == 0x21) {
+//			int x = 2785;
+//		}
 		fputc(*p0, obj_file);
 		fseek(obj_file, len - 1, SEEK_CUR);
 		int c = fgetc(obj_file);

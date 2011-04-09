@@ -317,23 +317,3 @@
 			   a)))))
 
 
-(var (any all 
-		  (to_any (itv (to_any (terms_to_iterms (a2l (read_all_terms_as_any))))
-					   (new_root_basic_index)))))
-
-(var (iterm 
-	  result 
-	  (a2it 
-	   (deepmap (lambda ((any a)) 
-				  (var (any cond_expr
-									  (to_any (cons 
-											   (quote cond)
-											   (a2l (quote ((:b* (? ?)) 
-															(else ?))))))))
-				  (if (match cond_expr a) (cond2if a) a)) 
-				all))))
-(mapp (lambda ((any f) (any a)) (display a (a2f f))) 
-	  (to_any stdout)
-	  (a2l (itt result)))
-(deepmap (lambda ((any a)) (display (to_any (iti (a2it a))) stdind)) 
-		 (to_any result))
