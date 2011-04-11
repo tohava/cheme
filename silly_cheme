@@ -1,23 +1,36 @@
 CHEME=`dirname $0`/cheme
 LINKER="gcc"
+
 for FOO in $*; do
 	if [ $FOO == "--make_layer" ]; then
 		MAKE_LAYER=" read_no_main.o lex.yy.o"
 		LINKER="g++"
+	elif [ $FOO == "--cond2if" ]; then
+		COND2IF="true"
 	else
 		KIMS="$KIMS $FOO"
 	fi
 done
 for FOO in $KIMS; do
-	if ! $CHEME compile < $FOO > $FOO.c ; then
-		echo "silly_cheme is stopping due to compile error"
-		exit 1
+	if [ "$COND2IF" == "true" ]; then
+		./cond2if < $FOO > $FOO.cond2if 
+		if ! $CHEME compile --index indices --first_layer $FOO < $FOO.cond2if > $FOO.c ; 
+		then
+			echo "silly_cheme is stopping due to compile error (with cond2if)"
+			exit 1
+		fi
+	else
+		if ! $CHEME compile < $FOO > $FOO.c ; then
+			echo "silly_cheme is stopping due to compile error"
+			exit 1
+		fi
 	fi
 	mv types $FOO.types 
 	mv main $FOO.main
 	TYPES="$TYPES $FOO.types"
 	MAINS="$MAINS $FOO.main"
 done
+echo "$CHEME merge_types $TYPES > hidden_cheme_types.c"
 $CHEME merge_types $TYPES > hidden_cheme_types.c
 $CHEME merge_mains $MAINS > hidden_cheme_mains.c
 I=0

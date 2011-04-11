@@ -5,7 +5,7 @@
  ((ptr FILE)                              stdout)
  ((func int (ptr FILE) int)               putc))
 (decl ((func any) read_all_terms_as_any))
-
+(decl ((func (ptr char) any) read_all_terms_as_any_from_file))
 
 (var  
  ((ptr FILE)               stdind (fopen "indices" "w"))
@@ -101,6 +101,8 @@
   (lambda ((any a))
 	(if (any_is sym a) (sym_str (any_to sym a)) "")))
   
+ ((func any (ptr char)) any2str
+  (lambda ((any a)) (any_to (ptr char) a)))
 
  ((func any (ptr char)) first_word
   (lambda ((any a))
@@ -212,7 +214,18 @@
 							(raw (cdr l) (basic_index_next b))))))))
 		(raw l (new_basic_index))))
 	 ((func any iterm) a2it
-	  (lambda ((any a)) (any_to iterm a))))
+	  (lambda ((any a)) (any_to iterm a)))
+	 ((func any) read_all_iterms_as_any
+	  (lambda ()
+		(to_any (itv (to_any (terms_to_iterms (a2l (read_all_terms_as_any))))
+					 (new_root_basic_index)))))
+	 
+	 ((func (ptr char) any) read_all_iterms_as_any_from_file
+	  (lambda (((ptr char) name))
+		(to_any 
+		 (itv (to_any (terms_to_iterms (a2l (read_all_terms_as_any_from_file name))))
+			  (new_root_basic_index))))))
+	 
 					
 (var
  ((func any (ptr FILE) any) display 

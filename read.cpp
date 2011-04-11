@@ -641,8 +641,8 @@ std::string error_context_to_string_multi_layer() {
 		term = read_term(i);
 	fclose(f);
 	std::string str = "/home/tohava/cheme/index2pos ";
-	std::list<Term>::iterator it = term.list.begin();
-	for ( ; it != term.list.end(); ++it) {
+	std::list<Term>::reverse_iterator it = term.list.rbegin();
+	for ( ; it != term.list.rend(); ++it) {
 		sprintf(buf, "%d", it->single.num);
 		str += " ";
 		str += buf;
@@ -754,7 +754,7 @@ cheme_any convert_term_to_any(const Term &t) {
 
 }
 
-cheme_any read_all_terms_from_file_as_any(FILE *f) {
+cheme_any read_all_terms_as_any_from_file_handle(FILE *f) {
 	init_parsing(f);
 	std::list<Term> all_terms;
 	for (int i = 0; peep_token().type != TOKEN_TYPE_EOF; ++i)
@@ -773,7 +773,14 @@ extern "C" {
 	}
 
 	cheme_any read_all_terms_as_any() {
-		return read_all_terms_from_file_as_any(stdin);
+		return read_all_terms_as_any_from_file_handle(stdin);
+	}
+
+	cheme_any read_all_terms_as_any_from_file(char *name) {
+		FILE *f = fopen(name, "r");
+		cheme_any result = read_all_terms_as_any_from_file_handle(f);
+		fclose(f);
+		return result;
 	}
 
 	cheme_any read_term_from_str(char *str) {
@@ -2962,11 +2969,17 @@ int merge_types(int argc, char **argv) {
 		  std::list<Term>::const_iterator >::iterator>::iterator it3 =
 		    it2_lst.begin();
 		tbls_it = it3_tbls_lst.begin();
-		for (++it3, ++tbls_it ; tbls_it != it3_tbls_lst.end(); ++tbls_it) {
+		for (type_in_1st_lst ? (++it3, ++tbls_it, 0) : 0;
+		     tbls_it != it3_tbls_lst.end();
+		     ++it3, ++tbls_it)
+		{
 			int type_index = list_at((***it3).list, 1).single.num;
 			if (type_index != unified_type_index)
 				fprintf(*tbls_it, "(%d %d)", type_index, unified_type_index);
 		}
+		ASSERT(it3 == it2_lst.end(),
+		       "Expected it2_lst and it3_tbls_lst to have same size");
+		      
 		for (it3 = it2_lst.begin(); it3 != it2_lst.end(); ++it3)
 			++(**it3);
 	}

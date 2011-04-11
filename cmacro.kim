@@ -10,8 +10,12 @@
  ((func any (ptr anylist)) a2l)
  ((func any iterm) a2it)
  ((func any (ptr FILE)) a2f)
- 
+ ((func any (ptr char)) any2str)
+
+ ((ptr anylist) nil)
  ((func any (ptr anylist) (ptr anylist)) cons)
+ ((func (ptr anylist) any) car)
+ ((func (ptr anylist) (ptr anylist)) cdr)
  ((func any any bool) match)
  ((func any any) cond2if)
  ((func basic_index) new_basic_index)
@@ -21,29 +25,36 @@
  ((func (ptr anylist) (ptr anylist)) terms_to_iterms)
  ((func any) read_all_terms_as_any)
  ((func any) read_all_iterms_as_any)
+ ((func (ptr char) any) read_all_iterms_as_any_from_file)
  ((func any (ptr FILE) any) display)
  ((func (ptr char) (ptr FILE) unit) putstr))
- 
 
+(type_pack (ptr anylist) embed_anylist)
+(decl ((func any any) embed_iterm))
 
+(var ((func any any) do_include
+	  (lambda ((any a))
+		(to_any 
+		 (pack embed_anylist 
+			   (a2l 
+				(itt (a2it 
+					  (read_all_iterms_as_any_from_file 
+					   (any2str (itt (a2it (car (cdr (a2l (itt (a2it a)))))))))))))))))
 
 (var (any all (read_all_iterms_as_any)))
-
 (var (iterm 
 	  result 
 	  (a2it 
-	   (deepmap (lambda ((any a)) 
-				  (var (any cond_expr
-									  (to_any (cons 
-											   (quote cond)
-											   (a2l (quote ((:b* (? ?)) 
-															(else ?))))))))
-				  (if (match cond_expr a) (cond2if a) a)) 
-				all))))
-(mapp (lambda ((any f) (any a)) (putstr " " (a2f f)) (display a (a2f f))) 
+	   (embed_iterm 
+		(deepmap (lambda ((any a)) 
+				   (var (any include_expr
+							 (to_any (cons (quote include) (cons (quote ?) nil)))))
+				   (if (match include_expr a) (do_include a) a))
+				 all)))))
+(display (quote (1 2 3 4 5)) stdout)
+(mapp (lambda ((any f) (any a)) (putstr " " (a2f f)) (display a (a2f f)))
 	  (to_any stdout)
 	  (a2l (itt result)))
 (deepmap (lambda ((any a)) (display (to_any (iti (a2it a))) stdind)) 
 		 (to_any result))
 
- 
