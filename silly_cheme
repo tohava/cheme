@@ -1,25 +1,46 @@
 CHEME=`dirname $0`/cheme
 LINKER="gcc"
-
+LINK="true"
 for FOO in $*; do
 	if [ $FOO == "--make_layer" ]; then
 		MAKE_LAYER=" read_no_main.o lex.yy.o"
 		LINKER="g++"
 	elif [ $FOO == "--cond2if" ]; then
 		COND2IF="true"
+		HAS_LAYERS="true"
+	elif [ $FOO == "--cmacro" ]; then
+		CMACRO="true"
+		HAS_LAYERS="true"
+	elif [ $FOO == "--compile" ]; then
+		LINK="false"
 	else
 		KIMS="$KIMS $FOO"
 	fi
 done
 for FOO in $KIMS; do
+	CURRENT_FILE=$FOO
+	rm hidden_cheme_prev_indices
+	echo "Layering $FOO..."
+	if [ "$CMACRO" == "true" ]; then
+	 	./cmacro < $CURRENT_FILE > $FOO.cmacro
+		mv hidden_cheme_indices hidden_cheme_prev_indices
+		CURRENT_FILE=$FOO.cmacro
+	fi
 	if [ "$COND2IF" == "true" ]; then
-		./cond2if < $FOO > $FOO.cond2if 
-		if ! $CHEME compile --index indices --first_layer $FOO < $FOO.cond2if > $FOO.c ; 
+		./cond2if < $CURRENT_FILE > $FOO.cond2if 
+		mv hidden_cheme_indices hidden_cheme_prev_indices
+		CURRENT_FILE=$FOO.cond2if
+	fi
+
+	if [ "$HAS_LAYERS" == "true" ]; then
+		echo "$CHEME compile --index hidden_cheme_prev_indices --first_layer $FOO < $CURRENT_FILE > $FOO.c"
+		if ! $CHEME compile --index hidden_cheme_prev_indices --first_layer $FOO < $CURRENT_FILE > $FOO.c; 
 		then
-			echo "silly_cheme is stopping due to compile error (with cond2if)"
+			echo "silly_cheme is stopping due to compile error (with layers)"
 			exit 1
 		fi
 	else
+		echo "$CHEME compile < $FOO > $FOO.c"
 		if ! $CHEME compile < $FOO > $FOO.c ; then
 			echo "silly_cheme is stopping due to compile error"
 			exit 1
@@ -30,17 +51,18 @@ for FOO in $KIMS; do
 	TYPES="$TYPES $FOO.types"
 	MAINS="$MAINS $FOO.main"
 done
-echo "$CHEME merge_types $TYPES > hidden_cheme_types.c"
-$CHEME merge_types $TYPES > hidden_cheme_types.c
-$CHEME merge_mains $MAINS > hidden_cheme_mains.c
-I=0
-for FOO in $KIMS; do
-	gcc -g -c $FOO.c
-	$CHEME patch_obj_types $FOO.o replace_table_`printf "%08d" $I` 
-	I=$((I+1))
-	OBJS="$OBJS $FOO.o"
-done
-gcc -c hidden_cheme_types.c
-gcc -c hidden_cheme_mains.c
-$LINKER -g $OBJS hidden_cheme_types.o hidden_cheme_mains.o $MAKE_LAYER
-
+if [ $LINK == "true" ]; then
+	echo "$CHEME merge_types $TYPES > hidden_cheme_types.c"
+	$CHEME merge_types $TYPES > hidden_cheme_types.c
+	$CHEME merge_mains $MAINS > hidden_cheme_mains.c
+	I=0
+	for FOO in $KIMS; do
+		gcc -g -c $FOO.c
+		$CHEME patch_obj_types $FOO.o replace_table_`printf "%08d" $I` 
+		I=$((I+1))
+		OBJS="$OBJS $FOO.o"
+	done
+	gcc -c hidden_cheme_types.c
+	gcc -c hidden_cheme_mains.c
+	$LINKER -g $OBJS hidden_cheme_types.o hidden_cheme_mains.o $MAKE_LAYER
+fi

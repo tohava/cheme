@@ -1,0 +1,39 @@
+(include "base.kimh")
+
+(type_pack (ptr anylist) string_map)
+(type_pack unit missing_in_map)
+(var 
+ ((func string_map (ptr char) (ptr any)) sm_find_addr
+  (lambda ((string_map smap) ((ptr char) name))
+	(var 
+	 ((func string_map (ptr char) (ptr anylist)) run 
+	  (lambda ((string_map smap) ((ptr char) name))
+		(var ((ptr anylist) l (unpack smap)))
+		(if (is_null l) 
+			nil
+			(begin
+			  (var 
+			   ((tup (ptr char) any) etup (any_to (tup (ptr char) any) (car l)))
+			   ((ptr char)           ekey (at      etup 0)))
+			  (if (streq name ekey)  l (run (pack string_map (cdr l)) 
+											ekey)))))))
+	(addr_at (any_to (tup (ptr char) any) (car (run smap name))) 1)))
+
+ ((func string_map (ptr char) any) sm_find
+  (lambda ((string_map smap) ((ptr char) name))
+	(ind (sm_find_addr smap name))))
+
+ ((func (ptr string_map) (ptr char) any unit) sm_update
+  (lambda (((ptr string_map) psmap) 
+		   ((ptr char)       key)
+		   (any              value))
+	(var ((ptr any) p (sm_find_addr (ind psmap) key)))
+	(var ((ptr anylist) l (unpack (ind psmap))))
+	(if (is_null p)
+		(<- psmap (pack string_map (cons (to_any (tupv key value)) l)))
+		(<- p value)))))
+
+
+			 
+												 
+	 

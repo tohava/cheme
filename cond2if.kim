@@ -42,8 +42,8 @@
 				all))))
 (mapp (lambda ((any f) (any a)) (putstr " " (a2f f)) (display a (a2f f))) 
 	  (to_any stdout)
-	  (a2l (itt result)))
-(deepmap (lambda ((any a)) (display (to_any (iti (a2it a))) stdind)) 
+	  (a2l (itt result))) 
+(deepmap (lambda ((any a)) (display (to_any (iti (a2it a))) stdind) a) 
 		 (to_any result))
 
  

@@ -44,13 +44,15 @@ extern "C" {
 	extern cheme_type_desc_data hidden_cheme_type_desc_data00000002_data;
 	extern cheme_type_desc_data hidden_cheme_type_desc_data00000003_data;
 	extern cheme_type_desc_data hidden_cheme_type_desc_data00000004_data;
+	extern cheme_type_desc_data hidden_cheme_type_desc_data00000005_data;
 }
 cheme_type_desc
     cheme_type_desc_int         = &hidden_cheme_type_desc_data00000000_data,
     cheme_type_desc_ptr_char    = &hidden_cheme_type_desc_data00000001_data,
     cheme_type_desc_ptr_anylist = &hidden_cheme_type_desc_data00000002_data,
     cheme_type_desc_sym         = &hidden_cheme_type_desc_data00000003_data,
-	cheme_type_desc_char        = &hidden_cheme_type_desc_data00000004_data;
+    cheme_type_desc_unit        = &hidden_cheme_type_desc_data00000004_data,
+	cheme_type_desc_char        = &hidden_cheme_type_desc_data00000005_data;
 
 bool is_first_and_last_layer = true;
 std::string indices_file = "";
@@ -755,6 +757,11 @@ cheme_any convert_term_to_any(const Term &t) {
 }
 
 cheme_any read_all_terms_as_any_from_file_handle(FILE *f) {
+	if (f == NULL) {
+		cheme_any ret;
+		ret.t = cheme_type_desc_unit;
+		return ret;
+	}
 	init_parsing(f);
 	std::list<Term> all_terms;
 	for (int i = 0; peep_token().type != TOKEN_TYPE_EOF; ++i)
@@ -779,7 +786,7 @@ extern "C" {
 	cheme_any read_all_terms_as_any_from_file(char *name) {
 		FILE *f = fopen(name, "r");
 		cheme_any result = read_all_terms_as_any_from_file_handle(f);
-		fclose(f);
+		if (f != NULL) fclose(f);
 		return result;
 	}
 
@@ -1135,6 +1142,8 @@ private:
 
 Type build_base_type(const std::string &str);
 Type build_uni_poly_type(const std::string &str, const Type &type);
+Type build_ptr_type(const Type &type)
+{ return build_uni_poly_type("ptr", type); }
 Type build_poly_type(const std::string &str,
                      const std::list<Type> &type_params);
 class TypeManager {
@@ -1451,9 +1460,9 @@ begin:
 		ASSERT(term.type == TERM_TYPE_LIST &&
 		       2 <= term.list.size() && term.list.size() <= (is_decl ? 2 : 3),
 		       "Invalid variable format");
-		pop_error_context();
 		std::string name = try_var_term_var_list_elem_name(term.list);
 		Type type = try_var_term_var_list_elem_type(term.list);
+		pop_error_context();
 		const std::pair<int, Type> init_val_index_and_type =
 		    try_var_term_var_list_elem_init(term.list); 
 		int init_value_temp_index = init_val_index_and_type.first;
@@ -1797,12 +1806,12 @@ int try_set_term(Term &term) {
 		ASSERT(same_types(itype, value.metadata.get_type()),
 		                  "Assignment violates types");
 		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
-#define LEFT_STR (make_temp_name(ptr_temp_index).c_str())
+#define LEFT_STR (("*" + make_temp_name(ptr_temp_index)).c_str())
 #define RIGHT_STR (make_temp_name(value_temp_index).c_str())
 		if (same_types(itype, build_base_type("any")))
 			assignment_for_anys(LEFT_STR, RIGHT_STR);
 		else
-			cheme_printf("*%s = %s;\n", LEFT_STR, RIGHT_STR);
+			cheme_printf("%s = %s;\n", LEFT_STR, RIGHT_STR);
 #undef RIGHT_STR
 #undef LEFT_STR
 		cheme_printf_unset_zone();
@@ -2012,14 +2021,16 @@ bool is_var_init_term(Term &term) {
 }
 
 int try_lambda_term_header(Term &term,
-                           const std::string &name, const Type &type) {
+                           const std::string &name, const Type &type,
+                           const bool global) {
 	const bool is_const_lambda = is_var_init_term(term);
 	std::list<Term>::iterator it = term.parent->list.begin();
 	
 	const int header_index = is_const_lambda ? 0 : temp_index - 1;
 	it = term.list.begin(); ++it;
 	ASSERT(it->type == TERM_TYPE_LIST, "second term of lambda should be param list");
-	cheme_printf("%s(",
+	cheme_printf("%s%s(",
+	             global ? "" : "static ",
 	             try_var_term_var_list_elem_translate(type, name.c_str(),
 	                                                  false).c_str());
 	foldl(print_lambda_param, true, it->list);
@@ -2091,7 +2102,8 @@ int try_lambda_term(Term &term) {
 		cheme_printf("return %s;\n", make_temp_name(final_value_index).c_str());
 		std::auto_ptr<char> body(cheme_printf_pop());
 		it = term.list.end(); --it;
-		try_lambda_term_header(term, real_name, it->metadata.get_type());
+		try_lambda_term_header(term, real_name, it->metadata.get_type(),
+		                       in_global_scope);
 		cheme_printf("%s",body.get());
 		FunctionManager::end_scope(); FunctionManager::end_lambda();
 		try_lambda_term_footer();
@@ -2162,39 +2174,65 @@ void try_to_any_term_assignment(const std::string &any_str,
 #undef LEFT_AND_RIGHT
 }
 
-int try_any_to_term(Term &term) {
-	if (is_specific_special_form(term, "any_to")) {
-		ASSERT(term.list.size() == 3,
-		       "any_to should accept a type and an expression");
-		std::list<Term>::iterator it = term.list.begin();
-		const Type type = type_from_term(*++it);
-		const int value_index = handle_term(*++it);
-		ASSERT(same_types(it->metadata.get_type(), build_base_type("any")),
-		       "Expression given to any_to should be of type 'any'");
-		const int result_index = temp_index++;
-		const std::string value_str(make_temp_name(value_index));
-		const std::string result_str(make_temp_name(result_index));
-		const std::string type_desc_data_str = make_type_desc_data_name
-		    (TypeInstanceManager::add(type));
+int try_any_to_or_any_ptr_to_term(Term &term, bool ptr) {
+	ASSERT(term.list.size() == 3,
+	       "any_to should accept a type and an expression");
+	std::list<Term>::iterator it = term.list.begin();
+	const Type type = type_from_term(*++it);
+	const Type ptr_type = build_ptr_type(type);
+	const int value_index = handle_term(*++it);
+	ASSERT2(same_types(it->metadata.get_type(),
+	                   (ptr ?
+	                    build_ptr_type(build_base_type("any")) :
+	                    build_base_type("any"))),
+	        "Expression given to %s should be of type '%s'",
+	        ptr ? "any_ptr_to" : "any_to",
+	        ptr ? "(ptr any)" : "any");
+	const int result_index = temp_index++;
+	const std::string value_str(make_temp_name(value_index));
+	const std::string result_str(make_temp_name(result_index));
+	const std::string type_desc_data_str = make_type_desc_data_name
+	    (TypeInstanceManager::add(type));
 
-		cheme_printf("if (%s(&%s) != %s) {\n"
-		             "  printf(\"dynamic type mismatch at %s, \"\n"
-		             "         \"inferred %%s, expected %%s\\n\",\n"
-		             "         %s(&%s), type_desc_name(%s));\n"
-		             "  abort();\n"
-		             "}\n",
-		             HIDDEN_CHEME_ANY_TYPE, value_str.c_str(),
-		             type_desc_data_str.c_str(),
-		             error_context_to_string().c_str(),
-		             HIDDEN_CHEME_ANY_TYPE_NAME, value_str.c_str(),
-		             type_desc_data_str.c_str());
-		cheme_printf("%s;\n",
-		             try_var_term_var_list_elem_translate(type, result_str,
-					                                      false).c_str());
+	cheme_printf("if (%s(&%s) != %s) {\n"
+	             "  printf(\"dynamic type mismatch at %s, \"\n"
+	             "         \"inferred %%s, expected %%s\\n\",\n"
+	             "         %s(&%s), type_desc_name(%s));\n"
+	             "  abort();\n"
+	             "}\n",
+	             HIDDEN_CHEME_ANY_TYPE, value_str.c_str(),
+	             type_desc_data_str.c_str(),
+	             error_context_to_string().c_str(),
+	             HIDDEN_CHEME_ANY_TYPE_NAME, value_str.c_str(),
+	             type_desc_data_str.c_str());
+	cheme_printf("%s;\n",
+	             try_var_term_var_list_elem_translate(ptr ? ptr_type : type,
+	                                                  result_str,
+				                                      false).c_str());
+	if (ptr) {
+		cheme_printf("%s = %s(%s);\n",
+		             result_str.c_str(),
+		             (type_info(type).size > ANY_SIZE_THRESHOLD ?
+		              HIDDEN_CHEME_ANY_DPTR : HIDDEN_CHEME_ANY_SPTR),
+		             value_str.c_str());
+ 	} else {
 		try_to_any_term_assignment(value_str, result_str, true,
 		                           type_info(type).size);
-		term.metadata.set_type(type);
-		return result_index;
+	}
+	term.metadata.set_type(type);
+	return result_index;
+}
+
+int try_any_to_term(Term &term) {
+	if (is_specific_special_form(term, "any_to")) {
+		return try_any_to_or_any_ptr_to_term(term, false);
+	}
+	return 0;
+}
+
+int try_any_ptr_to_term(Term &term) {
+	if (is_specific_special_form(term, "any_ptr_to")) {
+		return try_any_to_or_any_ptr_to_term(term, true);
 	}
 	return 0;
 }
@@ -2365,33 +2403,49 @@ int try_unpack_term(Term &term) {
 	return 0;
 }
 
+int try_at_or_addr_at_term(Term &term, bool addr) {
+	ASSERT(term.list.size() == 3, "at should accept 2 parameters");
+	std::list<Term>::iterator it = term.list.begin(); 
+	int value_index = handle_term(*++it);
+	Type value_type = it->metadata.get_type();
+	ASSERT1(value_type.name == "tup" && value_type.type_params.size() > 0,
+	        "1st parameter of at should be (tup ...), not %s",
+	        type_to_string(value_type).c_str());
+	ASSERT((++it)->is_single_int(),
+	       "2nd parameter of at must be an int literal");
+	int index = it->single.num;
+	ASSERT1(index < (int)value_type.type_params.size(),
+	        "at index is too big (should be less than %d)",
+	        (int)value_type.type_params.size());
+	ASSERT(index >= 0, "at index should be non-negative");
+	Type almost_result_type = list_at(value_type.type_params, index);
+	Type result_type = addr ?
+	    build_ptr_type(almost_result_type) : almost_result_type;
+	int result_index = temp_index++;
+	std::string s = try_var_term_var_list_elem_translate
+	    (result_type, make_temp_name(result_index).c_str(), false);
+	cheme_printf("%s = %s%s.elem%d;\n",
+	             s.c_str(),
+	             addr ? "&" : "",
+	             make_temp_name(value_index).c_str(),
+	             index);
+	term.metadata.set_type(result_type);
+	return result_index;
+}
+
 int try_at_term(Term &term) {
-	if (is_specific_special_form(term, "at")) {
-		ASSERT(term.list.size() == 3, "at should accept 2 parameters");
-		std::list<Term>::iterator it = term.list.begin(); 
-		int value_index = handle_term(*++it);
-		Type value_type = it->metadata.get_type();
-		ASSERT1(value_type.name == "tup" && value_type.type_params.size() > 0,
-		        "1st parameter of at should be (tup ...), not %s",
-		        type_to_string(value_type).c_str());
-		ASSERT((++it)->is_single_int(),
-		       "2nd parameter of at must be an int literal");
-		int index = it->single.num;
-		ASSERT1(index < (int)value_type.type_params.size(),
-		        "at index is too big (should be less than %d)",
-		        (int)value_type.type_params.size());
-		ASSERT(index >= 0, "at index should be non-negative");
-		Type result_type = list_at(value_type.type_params, index);
-		int result_index = temp_index++;
-		std::string s = try_var_term_var_list_elem_translate
-		    (result_type, make_temp_name(result_index).c_str(), false);
-		cheme_printf("%s = %s.elem%d;\n",
-		             s.c_str(), make_temp_name(value_index).c_str(), index);
-		term.metadata.set_type(result_type);
-		return result_index;
-	}
+	if (is_specific_special_form(term, "at"))
+		return try_at_or_addr_at_term(term, false);
 	return 0;
 }
+
+int try_addr_at_term(Term &term) {
+	if (is_specific_special_form(term, "addr_at"))
+		return try_at_or_addr_at_term(term, true);
+	return 0;
+}
+
+
 
 bool print_value_index_with_comma(bool is_first, const int value_index) {
 	cheme_printf("%c%s",
@@ -2523,8 +2577,10 @@ int handle_term(Term &term) {
 	TRY(try_char_term)	
 	TRY(try_any_is_term)
 	TRY(try_any_to_term)
+	TRY(try_any_ptr_to_term)
 	TRY(try_to_any_term)
 	TRY(try_at_term)
+	TRY(try_addr_at_term)
 	TRY(try_tupv_term)
 	TRY(try_ptr_add_term)
 	TRY(try_is_null_term)
@@ -2897,7 +2953,7 @@ int merge_types(int argc, char **argv) {
 		init_parsing(f);
 		for (int i = 0; peep_token().type != TOKEN_TYPE_EOF; ++i) {
 			lol.back().push_back(read_term(i));
-			fprintf(stderr, "Added %s to list %d\n", term_to_string(lol.back().back()).c_str(), j);
+//			fprintf(stderr, "Added %s to list %d\n", term_to_string(lol.back().back()).c_str(), j);
 		}
 		fclose(f);
 	}
@@ -2927,7 +2983,7 @@ int merge_types(int argc, char **argv) {
 		std::list<std::list<std::list<Term>::const_iterator>::iterator> it2_lst;
 		std::list<FILE *> it3_tbls_lst;
 		std::list< std::list<Term> >::const_iterator itl = lol.begin();
-		fprintf(stderr, "Comparing...\n");
+		// fprintf(stderr, "Comparing...\n");
 		for (it2 = it_lst.begin(); it2 != it_lst.end(); ++it2, ++itl) {
 			if (itl->end() == *it2) continue;
 			const Term &t1 = **it2;
@@ -2941,7 +2997,7 @@ int merge_types(int argc, char **argv) {
 		     ++tbls_it, ++it2, ++itl)
 		{
 			if (itl->end() == *it2) continue;
-			fprintf(stderr, "Going over %s...\n", term_to_string(**it2).c_str());
+			// fprintf(stderr, "Going over %s...\n", term_to_string(**it2).c_str());
 			if (it2_lst.empty()) {
 				it2_lst.push_back(it2);
 				it3_tbls_lst.push_back(*tbls_it);
@@ -2955,9 +3011,9 @@ int merge_types(int argc, char **argv) {
 			}
 		}
 		const bool type_in_1st_lst = *it2_lst.begin() == it_lst.begin();
-		fprintf(stderr, "Picked %s, type %s in first list\n",
-		        term_to_string(***it2_lst.begin()).c_str(),
-		        type_in_1st_lst ? "is" : "is not");
+		// fprintf(stderr, "Picked %s, type %s in first list\n",
+		//         term_to_string(***it2_lst.begin()).c_str(),
+		//         type_in_1st_lst ? "is" : "is not");
 		int unified_type_index = type_in_1st_lst
 		    ? list_at((***it2_lst.begin()).list, 1).single.num
 		    : non_1st_lst_ind++;

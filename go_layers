@@ -1,2 +1,4 @@
 ./silly_cheme matcher_core.kim cond2if.kim --make_layer
+mv a.out cond2if
 ./silly_cheme matcher_core.kim embed_anylist.kim cmacro.kim --cond2if --make_layer
+mv a.out cmacro

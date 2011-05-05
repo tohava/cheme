@@ -4,6 +4,7 @@
 (decl
  ((ptr FILE) stdout)
  ((ptr FILE) stdind)
+ ((func (ptr char) (ptr char) bool) streq)
  ((func iterm any) itt)
  ((func iterm basic_index) iti)
  ((func any basic_index iterm) itv)
@@ -15,6 +16,7 @@
  ((ptr anylist) nil)
  ((func any (ptr anylist) (ptr anylist)) cons)
  ((func (ptr anylist) any) car)
+ ((func (ptr anylist) (ptr any)) car_addr)
  ((func (ptr anylist) (ptr anylist)) cdr)
  ((func any any bool) match)
  ((func any any) cond2if)
@@ -28,32 +30,3 @@
  ((func (ptr char) any) read_all_iterms_as_any_from_file)
  ((func any (ptr FILE) any) display)
  ((func (ptr char) (ptr FILE) unit) putstr))
-
-(type_pack (ptr anylist) embed_anylist)
-(decl ((func any any) embed_iterm))
-
-(var ((func any any) do_include
-	  (lambda ((any a))
-		(to_any 
-		 (pack embed_anylist 
-			   (a2l 
-				(itt (a2it 
-					  (read_all_iterms_as_any_from_file 
-					   (any2str (itt (a2it (car (cdr (a2l (itt (a2it a)))))))))))))))))
-
-(var (any all (read_all_iterms_as_any)))
-(var (iterm 
-	  result 
-	  (a2it 
-	   (embed_iterm 
-		(deepmap (lambda ((any a)) 
-				   (var (any include_expr
-							 (to_any (cons (quote include) (cons (quote ?) nil)))))
-				   (if (match include_expr a) (do_include a) a))
-				 all)))))
-(mapp (lambda ((any f) (any a)) (putstr " " (a2f f)) (display a (a2f f)))
-	  (to_any stdout)
-	  (a2l (itt result)))
-(deepmap (lambda ((any a)) (display (to_any (iti (a2it a))) stdind) a) 
-		 (to_any result))
-

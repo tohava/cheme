@@ -3,16 +3,21 @@
  ((func (ptr char) (ptr char) (ptr FILE)) fopen)
  ((func (ptr FILE) int)                   fclose)
  ((ptr FILE)                              stdout)
+ ((func (ptr char) (ptr char) int)        strcmp)
  ((func int (ptr FILE) int)               putc))
 (decl ((func any) read_all_terms_as_any))
 (decl ((func (ptr char) any) read_all_terms_as_any_from_file))
 
 (var  
- ((ptr FILE)               stdind (fopen "indices" "w"))
+ ((ptr FILE)               stdind (fopen "hidden_cheme_indices" "w"))
  ((func bool bool)         mnot   (lambda ((bool b)) (if b false true)))
  ((func any int)           a2i    (lambda ((any a)) (any_to int           a)))
  ((func any (ptr FILE))    a2f    (lambda ((any a)) (any_to (ptr FILE)    a)))
  
+ ((func (ptr char) (ptr char) bool) streq (lambda (((ptr char) s1)
+												   ((ptr char) s2))
+											(== (strcmp s1 s2) 0)))
+
  ((func int (ptr FILE) unit) putint 
   (lambda ((int z) 
 		   ((ptr FILE) f))
@@ -78,6 +83,10 @@
 	(<- p (pack anylist (tupv a b)))
 	p))
  
+ ((func (ptr anylist) (ptr any)) car_addr
+  (lambda (((ptr anylist) l))
+	(addr_at (unpack (ind l)) 0)))
+
  ((func (ptr anylist) any) car 
   (lambda (((ptr anylist) l))
 	(at (unpack (ind l)) 0)))
@@ -215,10 +224,35 @@
 		(raw l (new_basic_index))))
 	 ((func any iterm) a2it
 	  (lambda ((any a)) (any_to iterm a)))
+
+	 (any read_all_iterms_as_any_indices)
+
 	 ((func any) read_all_iterms_as_any
 	  (lambda ()
-		(to_any (itv (to_any (terms_to_iterms (a2l (read_all_terms_as_any))))
-					 (new_root_basic_index)))))
+		(<- (ref read_all_iterms_as_any_indices) 
+			(read_all_terms_as_any_from_file "hidden_cheme_prev_indices"))
+		(if (any_is unit read_all_iterms_as_any_indices)
+			(to_any
+			 (itv
+			  (to_any (terms_to_iterms (a2l (read_all_terms_as_any))))
+			  (new_root_basic_index)))
+			(begin
+			  (var ((func any any) zipper
+					(lambda ((any a))
+					  (var 
+					   (any ret 
+							(to_any 
+							 (itv a (pack
+									 basic_index
+									 (a2l
+									  (car 
+									   (a2l 
+										read_all_iterms_as_any_indices))))))))
+					  (<- (ref read_all_iterms_as_any_indices) 
+						  (to_any (cdr (a2l read_all_iterms_as_any_indices))))
+					  ret)))
+			  (decl ((func (func any any) any any) deepmap))
+			  (deepmap zipper (read_all_terms_as_any))))))	 
 	 
 	 ((func (ptr char) any) read_all_iterms_as_any_from_file
 	  (lambda (((ptr char) name))
@@ -320,13 +354,19 @@
 
 	 ((func (func any any) any any) deepmap
 	  (lambda (((func any any) f) (any a))
-		(f (if (any_is (ptr anylist) (itt (a2it a)))
-			   (to_any 
-				(itv (to_any (mapp (lambda ((any f) (any a))
-									 (deepmap (any_to (func any any) f) a))
-								   (to_any f) 
-								   (any_to (ptr anylist) (itt (a2it a)))))
-					 (iti (a2it a))))
-			   a)))))
+		(var ((func (func any any) (ptr anylist) any) do_list_elems
+			  (lambda (((func any any) f) 
+					   ((ptr anylist) l))
+				(to_any (mapp (lambda ((any f) (any a))
+								(deepmap (any_to (func any any) f) a))
+							  (to_any f)
+							  l)))))
+		(f 
+		 (if (any_is (ptr anylist) a)
+			 (do_list_elems f (any_to (ptr anylist) a))
+			 (if (and (any_is iterm a) (any_is (ptr anylist) (itt (a2it a))))
+				 (to_any 
+				  (itv (do_list_elems f (a2l (itt (a2it a)))) (iti (a2it a))))
+				 a))))))
 
 
