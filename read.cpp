@@ -1462,13 +1462,16 @@ begin:
 		       "Invalid variable format");
 		std::string name = try_var_term_var_list_elem_name(term.list);
 		Type type = try_var_term_var_list_elem_type(term.list);
-		pop_error_context();
 		const std::pair<int, Type> init_val_index_and_type =
 		    try_var_term_var_list_elem_init(term.list); 
 		int init_value_temp_index = init_val_index_and_type.first;
-		ASSERT(init_value_temp_index == 0 ||
-		       same_types(init_val_index_and_type.second, type),
-		       "Variable initialization should use same type");
+		ASSERT2(init_value_temp_index == 0 ||
+		        same_types(init_val_index_and_type.second, type),
+		        "Variable initialization type mismatch "
+		        "(expected %s, inferred %s)",
+		        type_to_string(type).c_str(),
+		        type_to_string(init_val_index_and_type.second).c_str());
+		pop_error_context();
 		std::string translation = try_var_term_var_list_elem_translate
 		    (type, name, is_decl);
 		bool is_c_func = type.name == "func" && init_value_temp_index < 0;
@@ -2064,8 +2067,9 @@ int try_lambda_term(Term &term) {
 		    get_next_temp();
 		std::string real_name = !is_const_lambda || in_global_scope ?
 		    sym_name : get_next_temp();
-		int lambda_index = is_const_lambda ?
-		    -(temp_index - 1) : (temp_index - 1);
+		int lambda_index = is_const_lambda
+		    ? (in_global_scope ? -27852785 : -(temp_index - 1))
+		    : (temp_index - 1);
 		std::list<Term>::iterator it = term.list.begin(); ++it;
 		FunctionManager::start_scope();
 		FunctionManager::start_lambda(is_const_lambda ? real_name : "");
