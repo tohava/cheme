@@ -1,0 +1,7 @@
+(decl
+ ((func (ptr char) (ptr char) int) strcmp))
+
+(var
+ ((func (ptr char) (ptr char) bool) streq (lambda (((ptr char) s1)
+												   ((ptr char) s2))
+											(== (strcmp s1 s2) 0))))

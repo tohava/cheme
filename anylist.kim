@@ -1,0 +1,20 @@
+(var
+ ((ptr anylist) nil)
+ ((func (ptr anylist) (ptr any)) car_addr
+  (lambda (((ptr anylist) l))
+	(addr_at (unpack (ind l)) 0)))
+ 
+ ((func (ptr anylist) any) car 
+  (lambda (((ptr anylist) l))
+	(at (unpack (ind l)) 0)))
+ 
+ ((func (ptr anylist) (ptr anylist)) cdr
+  (lambda (((ptr anylist) l))
+	(at (unpack (ind l)) 1)))
+
+ ((func any (ptr anylist) (ptr anylist)) cons
+  (lambda ((any a) ((ptr anylist) b))	
+	(var ((ptr anylist) p (new anylist)))
+	(<- p (pack anylist (tupv a b)))
+	p)))
+
