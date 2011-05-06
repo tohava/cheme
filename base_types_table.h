@@ -5,4 +5,5 @@ ENTRY(00000002, 2, build_uni_poly_type("ptr", build_base_type("anylist")),
       sizeof(char*), "(ptr anylist)")
 ENTRY(00000003, 3, build_base_type("sym"), sizeof(cheme_sym), "sym")
 ENTRY(00000004, 4, build_base_type("unit"), sizeof(cheme_unit), "unit")
-LASTENTRY(00000005, 5, build_base_type("char"), sizeof(char), "char")
+ENTRY(00000005, 5, build_base_type("char"), sizeof(char), "char")
+LASTENTRY(00000006, 6, build_base_type("anylist"), sizeof(cheme_anylist), "anylist")

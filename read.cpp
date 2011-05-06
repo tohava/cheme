@@ -45,6 +45,7 @@ extern "C" {
 	extern cheme_type_desc_data hidden_cheme_type_desc_data00000003_data;
 	extern cheme_type_desc_data hidden_cheme_type_desc_data00000004_data;
 	extern cheme_type_desc_data hidden_cheme_type_desc_data00000005_data;
+	extern cheme_type_desc_data hidden_cheme_type_desc_data00000006_data;
 }
 cheme_type_desc
     cheme_type_desc_int         = &hidden_cheme_type_desc_data00000000_data,
@@ -52,7 +53,8 @@ cheme_type_desc
     cheme_type_desc_ptr_anylist = &hidden_cheme_type_desc_data00000002_data,
     cheme_type_desc_sym         = &hidden_cheme_type_desc_data00000003_data,
     cheme_type_desc_unit        = &hidden_cheme_type_desc_data00000004_data,
-	cheme_type_desc_char        = &hidden_cheme_type_desc_data00000005_data;
+	cheme_type_desc_char        = &hidden_cheme_type_desc_data00000005_data,
+    cheme_type_desc_anylist     = &hidden_cheme_type_desc_data00000006_data;
 
 bool is_first_and_last_layer = true;
 std::string indices_file = "";
