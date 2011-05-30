@@ -13,6 +13,7 @@
  ((func any iterm) a2it)
  ((func any (ptr FILE)) a2f)
  ((func any (ptr char)) any2str)
+ ((func any (ptr char)) any2symstr)
  ((func bool bool)      mnot)
 
  ((ptr anylist) nil)
