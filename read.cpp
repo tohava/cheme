@@ -132,10 +132,10 @@ void cheme_printf_empty_stacks_to_stderr();
 
 #define ABORT(x) ASSERT(false,x)
 #define ABORT1(x,y) ASSERT1(false,x,y)
-#define ASSERT(x,y) ((x) || (fputs((y),stderr), fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), cheme_printf_empty_stacks_to_stderr(), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
+#define ASSERT(x,y) ((x) || (fputs((y),stderr), fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), /*cheme_printf_empty_stacks_to_stderr(),*/ fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
 #define ASSERT1(x,y,z) ((x) || (fprintf(stderr, (std::string(y) + "\n").c_str(), z), ASSERT_EPILOGUE
 #define ASSERT2(x,y,a,b) ((x) || (fprintf(stderr, (std::string(y) + "\n").c_str(), a, b), ASSERT_EPILOGUE
-#define ASSERT_EPILOGUE fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), cheme_printf_empty_stacks_to_stderr(), fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
+#define ASSERT_EPILOGUE fprintf(stderr, "\nAt %s\n", error_context_to_string().c_str()), /*cheme_printf_empty_stacks_to_stderr(),*/ fprintf(stderr, "At compiler source %s:%d\n", __FILE__, __LINE__) , abort(), true))
 
 typedef struct {
 	char *buf_origin;
@@ -1641,8 +1641,8 @@ void assignment_for_anys(const char *left_str,
 	             "memcpy(%s(&%s),%s(&%s),size2);\n}\n",
 	             MAX_SIZE, HIDDEN_CHEME_ANY_TYPE_PTR, left_str,
 	             HIDDEN_CHEME_ANY_TYPE_PTR, right_str,
-	             HIDDEN_CHEME_ANY_DPTR_PTR, left_str,
-	             HIDDEN_CHEME_ANY_DPTR_PTR, right_str);
+	             HIDDEN_CHEME_ANY_DPTR, left_str,
+	             HIDDEN_CHEME_ANY_DPTR, right_str);
 	cheme_printf("}\n");
 #undef MAX_SIZE 
 	
@@ -2770,7 +2770,7 @@ void print_header_stuff() {
 	print_tup_structs_and_type_packs();
 	// printf("struct anylist { %s data; }; ",
 	//        make_tup_name(anylist_data_id).c_str());
-	puts("void abort(void); void *malloc(long size); void free(void *ptr);\n");
+	puts("unit abort(void); void *malloc(long size); void free(void *ptr);\n");
 	puts("void *memcpy(void *dest, const void *src, long n);");
 	puts("int printf(const char *, ...);");
 	puts("any read_term_from_str(char *);");
@@ -2871,6 +2871,9 @@ void add_primitives() {
 	sy_sy_bool.push_back(build_base_type("sym"));
 	sy_sy_bool.push_back(build_base_type("bool"));
 	FunctionManager::add_simple("sym_eq", build_poly_type("func", sy_sy_bool));
+	std::list<Type> unit_func;
+	unit_func.push_back(build_base_type("unit"));
+	FunctionManager::add_simple("abort", build_poly_type("func", unit_func));
 }
 
 #ifdef MAIN

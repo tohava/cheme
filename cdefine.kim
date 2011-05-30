@@ -1,0 +1,109 @@
+(include "base.kimh")
+(include "string_map.kimh")
+(include "embed_anylist.kimh")
+
+(type_pack (tup bool (ptr anylist) any) cdefine_info)
+
+(var 	 
+ (any cdefine_const_expr (to_any
+						  (cons (quote cdefine) 
+								(a2l (quote ( .             ?))))))
+ (any cdefine_macro_expr (to_any 
+						  (cons (quote cdefine) 
+								(a2l (quote ( (. . (:b* .)) ?))))))
+ (string_map cdefine_sm (sm_new))
+
+ ((func (ptr char) unit) die 
+  (lambda (((ptr char) err)) (putstr err stderr) (abort) unitv))
+
+ ((func cdefine_info bool) is_simple_subst
+  (lambda ((cdefine_info cdi)) (mnot (at (unpack cdi) 0))))
+
+ ((func cdefine_info any) get_simple_subst
+  (lambda ((cdefine_info cdi)) (at (unpack cdi) 2)))
+ 
+ ((func (ptr anylist) int (ptr anylist)) do_cdefine
+  (lambda (((ptr anylist) l) 
+		   (int depth))
+	(putstr "Inside (do_cdefine " stderr)
+	(display (to_any l) stderr)
+	(putstr " " stderr)
+	(display (to_any depth) stderr)
+	(putstr "\n" stderr)
+	(var ((func any any) assert_iterm
+		  (lambda ((any a))
+			(any_to iterm a)
+			a)))
+	(if (is_null l)
+		nil
+		(begin
+		  (var 
+		   (iterm ai (a2it (assert_iterm (car l))))
+		   (any trm (itt ai))
+		   (basic_index idx (iti ai))
+		   ((tup bool bool) flags 
+			(cond ((match cdefine_const_expr trm) (tupv true false))
+				  ((match cdefine_macro_expr trm) (tupv true true))
+				  (else                           (tupv false false))))
+		   ((ptr any) p))
+		  (var (any nop (to_any (pack embed_anylist nil))))
+		  (cons
+		   (if (at flags 0)
+			   (begin 
+				 (var (any first_param (itt (a2it (car (cdr (a2l trm)))))))
+				 (var (any second_param (itt (a2it (car (cdr (cdr (a2l trm))))))))
+				 (putstr "first_param: " stdout) (display first_param stdout) (putstr "\n" stdout)
+				 (putstr "second_param: " stdout) (display second_param stdout) (putstr "\n" stdout)
+				 (var ((ptr char) key (sym_str (any_to 
+												sym
+												(if (at flags 1) 
+													(itt 
+													 (a2it 
+													  (car (a2l first_param))))
+													first_param)))))
+				 (<- (ref p) (sm_find_addr cdefine_sm key))
+				 (if (and (mnot (is_null p)) 
+						  (== (at (any_to (tup int cdefine_info) 
+										  (car (a2l (ind p)))) 0) 
+							  depth))
+					 (die "Cannot define what is already defined"))
+				 (var (any new_bind
+						   (to_any 
+							(tupv depth
+								  (pack cdefine_info
+										(if (at flags 1)
+											(tupv true (cdr (a2l first_param))
+												  second_param)
+											(tupv false nil 
+												  second_param)))))))
+				 (if (is_null p) 
+					 (sm_update (ref cdefine_sm) key 
+								(to_any (cons new_bind nil)))
+					 (<- p (to_any 
+							(cons 
+							 new_bind
+							 (any_to (ptr anylist) (ind p))))))
+				 nop)
+			   (cond
+				((any_is (ptr anylist) trm) 
+				 (to_any (do_cdefine (a2l trm) (+ depth 1))))
+				((any_is sym           trm)
+				 (begin
+				   (var (any matching (sm_find cdefine_sm 
+											   (sym_str (any_to sym trm)))))
+				   (if (any_is string_map_missing matching)
+					   trm
+					   (begin
+						 (var (cdefine_info
+							   matching2
+							   (at (any_to (tup int cdefine_info) 
+										   (car (a2l matching))) 1)))
+						 (if (is_simple_subst matching2)
+							 (get_simple_subst matching2)
+							 trm)))))
+				(else trm)))
+		  (do_cdefine (cdr l) depth)))))))
+
+(var (any all (read_all_iterms_as_any)))
+(display (embed_iterm (to_any (do_cdefine (a2l (itt (a2it all))) 0))) stdout)
+

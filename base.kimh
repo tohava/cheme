@@ -3,6 +3,7 @@
 (type_pack (ptr (tup any basic_index)) iterm)
 (decl
  ((ptr FILE) stdout)
+ ((ptr FILE) stderr)
  ((ptr FILE) stdind)
  ((func (ptr char) (ptr char) bool) streq)
  ((func iterm any) itt)
@@ -12,6 +13,7 @@
  ((func any iterm) a2it)
  ((func any (ptr FILE)) a2f)
  ((func any (ptr char)) any2str)
+ ((func bool bool)      mnot)
 
  ((ptr anylist) nil)
  ((func any (ptr anylist) (ptr anylist)) cons)

@@ -1,8 +1,10 @@
 (type_pack FILE)
+(type_pack (ptr anylist) embed_anylist)
 (decl
  ((func (ptr char) (ptr char) (ptr FILE)) fopen)
  ((func (ptr FILE) int)                   fclose)
  ((ptr FILE)                              stdout)
+ ((ptr FILE)                              stderr)
  ((func (ptr char) (ptr char) int)        strcmp)
  ((func int (ptr FILE) int)               putc))
 (decl ((func any) read_all_terms_as_any))
@@ -105,15 +107,16 @@
   (lambda ((any a))
 	(char_eq (ind (first_word a)) ':')))
 
- ((func any bool) is_wild
-  (lambda ((any a))
-	(and (any_is sym a)
-		 (str_eq (any2symstr a) "?"))))
-
  ((func any (ptr char) bool) is_sym
   (lambda ((any a) ((ptr char) w) )
 	(and (any_is sym a)
 		 (str_eq (any2symstr a) w)))) 
+
+ ((func any bool) is_wild
+  (lambda ((any a)) (is_sym a "?")))
+
+ ((func any bool) is_wild_atom
+  (lambda ((any a)) (is_sym a ".")))
 
  ((func any bool) is_cspecial_empty
   (lambda ((any a))
@@ -187,6 +190,10 @@
   (lambda ((iterm it)) (at (ind (unpack it)) 1)))
  ((func any basic_index iterm) itv 
   (lambda ((any a) (basic_index b)) 
+	(if (any_is embed_anylist a)
+		(begin
+		  (putstr "should not pack embed_anylist inside iterm\n" stderr)
+		  (abort)))
 	(var ((ptr (tup any basic_index)) p (new (tup any basic_index))))
 	(<- p (tupv a b))
 	(pack iterm p))))
@@ -290,7 +297,8 @@
 (var ((func any any bool) match		   
 	  (lambda ((any expr) (any data2))
 		(var (any data (if (any_is iterm data2) (itt (a2it data2)) data2)))
-		(if (is_wild expr)
+		(if (or (is_wild expr) (and (is_wild_atom expr)
+									(mnot (any_is (ptr anylist) data))))
 			true
 		(if (or (mnot (any_is (ptr anylist) expr))
 				(mnot (any_is (ptr anylist) data)))

@@ -1,7 +1,9 @@
 (include "base.kimh")
 
+(decl ((func int int) putchar))
+(type_pack unit string_map_missing)
 (type_pack (ptr anylist) string_map)
-(type_pack unit missing_in_map)
+(var ((ptr any) null_ptr_any))
 (var 
  ((func string_map (ptr char) (ptr any)) sm_find_addr
   (lambda ((string_map smap) ((ptr char) name))
@@ -15,25 +17,47 @@
 			  (var 
 			   ((tup (ptr char) any) etup (any_to (tup (ptr char) any) (car l)))
 			   ((ptr char)           ekey (at      etup 0)))
+			  (putstr "sm_find_addr is comparing " stderr)
+			  (putstr name stderr)
+			  (putstr " against " stderr)
+			  (putstr ekey stderr)
+			  (putstr "\n" stderr)
 			  (if (streq name ekey)  l (run (pack string_map (cdr l)) 
-											ekey)))))))
-	(addr_at (any_to (tup (ptr char) any) (car (run smap name))) 1)))
+											name)))))))
+	(var ((ptr anylist) l (run smap name)))
+	(if (is_null l) 
+		null_ptr_any 
+		(addr_at (any_to (tup (ptr char) any) (car l)) 1))))
 
  ((func string_map (ptr char) any) sm_find
   (lambda ((string_map smap) ((ptr char) name))
-	(ind (sm_find_addr smap name))))
+	(var ((ptr any) p (sm_find_addr smap name))) 
+	(if (is_null p) (to_any (pack string_map_missing unitv)) (ind p))))
 
+ ((func string_map) sm_new (lambda () (pack string_map nil)))
  ((func (ptr string_map) (ptr char) any unit) sm_update
   (lambda (((ptr string_map) psmap) 
 		   ((ptr char)       key)
 		   (any              value))
+	(putstr "sm_update " stderr)
+	(putstr key stderr)
+	(putstr "\n" stderr)
 	(var ((ptr any) p (sm_find_addr (ind psmap) key)))
 	(var ((ptr anylist) l (unpack (ind psmap))))
+	(putstr "sm_update_nearly_done\n" stderr)
 	(if (is_null p)
 		(<- psmap (pack string_map (cons (to_any (tupv key value)) l)))
 		(<- p value)))))
 
+(if false
+	(begin
+	  (var (string_map sm (sm_new)))
+	  (putchar (if (any_is string_map_missing (sm_find sm "olga")) 118 120))
+	  (sm_update (ref sm) "olga" (to_any "jenya"))
+	  (putchar (if (streq "jenya" (any_to (ptr char) (sm_find sm "olga"))) 118 120))
+	  (sm_update (ref sm) "itay" (to_any 256))
+	  (putchar (if (== 256 (any_to int (sm_find sm "itay"))) 118 120))
+	  (sm_update (ref sm) "olga" (to_any 2012))
+	  (putchar (if (== 2012 (any_to int (sm_find sm "olga"))) 118 120))
+	  unitv))
 
-			 
-												 
-	 

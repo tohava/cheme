@@ -1,0 +1,2 @@
+(decl ((func any any) embed_iterm))
+(type_pack (ptr anylist) embed_anylist)
