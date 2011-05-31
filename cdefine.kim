@@ -26,42 +26,77 @@
   (lambda (((ptr any) ptrm)
 		   (int depth)
 		   (bool simple))
-	(begin 
-	  (var ((ptr any) p))
-	  (var (any first_param (itt (a2it (car (cdr (a2l (ind ptrm))))))))
-	  (var (any second_param (itt (a2it (car (cdr (cdr (a2l (ind ptrm)))))))))
-	  (putstr "first_param: " stdout) (display first_param stdout) (putstr "\n" stdout)
-	  (putstr "second_param: " stdout) (display second_param stdout) (putstr "\n" stdout)
-	  (var ((ptr char) key (sym_str (any_to 
-									 sym
-									 (if simple 
-										 (itt 
-										  (a2it 
-										   (car (a2l first_param))))
-										 first_param)))))
-	  (<- (ref p) (sm_find_addr cdefine_sm key))
-	  (if (and (mnot (is_null p)) 
-			   (== (at (any_to (tup int cdefine_info) 
-							   (car (a2l (ind p)))) 0) 
-				   depth))
-		  (die "Cannot define what is already defined"))
-	  (var (any new_bind
-				(to_any 
-				 (tupv depth
-					   (pack cdefine_info
-							 (if simple
-								 (tupv true (cdr (a2l first_param))
-									   second_param)
-								 (tupv false nil 
-									   second_param)))))))
-	  (if (is_null p) 
-		  (sm_update (ref cdefine_sm) key 
-					 (to_any (cons new_bind nil)))
-					 (<- p (to_any 
-							(cons 
-							 new_bind
-							 (any_to (ptr anylist) (ind p))))))
-				 (to_any (pack embed_anylist nil)))))
+	(var ((ptr any) p))
+	(var (any first_param (itt (a2it (car (cdr (a2l (ind ptrm))))))))
+	(var (any second_param (itt (a2it (car (cdr (cdr (a2l (ind ptrm)))))))))
+	(putstr "first_param: " stdout) (display first_param stdout) (putstr "\n" stdout)
+	(putstr "second_param: " stdout) (display second_param stdout) (putstr "\n" stdout)
+	(var ((ptr char) key (sym_str (any_to 
+								   sym
+								   (if simple 
+									   (itt 
+										(a2it 
+										 (car (a2l first_param))))
+									   first_param)))))
+	(<- (ref p) (sm_find_addr cdefine_sm key))
+	(if (and (mnot (is_null p)) 
+			 (== (at (any_to (tup int cdefine_info) 
+							 (car (a2l (ind p)))) 0) 
+				 depth))
+		(die "Cannot define what is already defined"))
+	(var (any new_bind
+			  (to_any 
+			   (tupv depth
+					 (pack cdefine_info
+						   (if simple
+							   (tupv true (cdr (a2l first_param))
+									 second_param)
+							   (tupv false nil 
+									 second_param)))))))
+	(if (is_null p) 
+		(sm_update (ref cdefine_sm) key 
+				   (to_any (cons new_bind nil)))
+		(<- p (to_any 
+			   (cons 
+				new_bind
+				(any_to (ptr anylist) (ind p))))))
+	(to_any (pack embed_anylist nil))))
+
+ ((func (ptr any) int any) do_cdefine_subst
+  (lambda (((ptr any) ptrm)
+		   (int depth))
+	(decl ((func (ptr anylist) int (ptr anylist)) do_cdefine))
+	(var (any trm (ind ptrm)))
+	(cond
+	 ((any_is (ptr anylist) trm) 
+	  (begin
+		(putstr "kuku1" stderr)
+		(var ((ptr anylist) trm2 (do_cdefine (a2l trm) (+ depth 1))))
+		(putstr "kuku2" stderr)
+		(var (any matching 
+				  (sm_find cdefine_sm
+						   (any2symstr (itt (a2it (car trm2)))))))
+		(if (any_is string_map_missing matching)
+			(to_any trm2)
+			(begin
+			  (die "TODO: handle parameterized cdefine")
+			  (to_any trm2)))))
+	 ((any_is sym           trm)
+	  (begin
+		(var (any matching (sm_find cdefine_sm 
+									(sym_str (any_to sym trm)))))
+		(if (any_is string_map_missing matching)
+			trm
+			(begin
+			  (var (cdefine_info
+					matching2
+					(at (any_to (tup int cdefine_info) 
+								(car (a2l matching))) 1)))
+			  (if (is_simple_subst matching2)
+				  (get_simple_subst matching2)
+				  trm)))))
+	 (else trm))))
+
 
  ((func (ptr anylist) int (ptr anylist)) do_cdefine
   (lambda (((ptr anylist) l) 
@@ -88,37 +123,9 @@
 				  (else                           (tupv false false)))))
 		  (cons
 		   (if (at flags 0)
-			   (do_cdefine_defn (ref trm) depth (mnot (at flags 1)))
-			   (cond
-				((any_is (ptr anylist) trm) 
-				 (begin
-				   (putstr "kuku1" stderr)
-				   (var ((ptr anylist) trm2 (do_cdefine (a2l trm) (+ depth 1))))
-				   (putstr "kuku2" stderr)
-				   (var (any matching 
-							 (sm_find cdefine_sm
-									  (any2symstr (itt (a2it (car trm2)))))))
-				   (if (any_is string_map_missing matching)
-					   (to_any trm2)
-					   (begin
-						 (die "TODO: handle parameterized cdefine")
-						 (to_any trm2)))))
-				((any_is sym           trm)
-				 (begin
-				   (var (any matching (sm_find cdefine_sm 
-											   (sym_str (any_to sym trm)))))
-				   (if (any_is string_map_missing matching)
-					   trm
-					   (begin
-						 (var (cdefine_info
-							   matching2
-							   (at (any_to (tup int cdefine_info) 
-										   (car (a2l matching))) 1)))
-						 (if (is_simple_subst matching2)
-							 (get_simple_subst matching2)
-							 trm)))))
-				(else trm)))
-		  (do_cdefine (cdr l) depth)))))))
+			   (do_cdefine_defn  (ref trm) depth (mnot (at flags 1)))
+			   (do_cdefine_subst (ref trm) depth))
+		   (do_cdefine (cdr l) depth)))))))
 
 (var (any all (read_all_iterms_as_any)))
 (display (embed_iterm (to_any (do_cdefine (a2l (itt (a2it all))) 0))) stdout)
