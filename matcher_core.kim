@@ -15,7 +15,8 @@
  ((func (ptr anylist) (ptr any))         car_addr)
  ((func (ptr anylist) any)               car)
  ((func (ptr anylist) (ptr anylist))     cdr)
- ((func any (ptr anylist) (ptr anylist)) cons))
+ ((func any (ptr anylist) (ptr anylist)) cons)
+ ((func (ptr anylist) (ptr anylist) (ptr anylist)) append))
 
 (var  
  ((ptr FILE)               stdind (fopen "hidden_cheme_indices" "w"))
@@ -278,6 +279,8 @@
 		(begin (putint (any_to int a) f) unitv)
     (if (any_is sym           a)
 		(putstr (sym_str (any_to sym a)) f)
+	(if (any_is bool          a)
+	    (putstr (if (any_to bool a) "true" "false") f)	
     (if (any_is (ptr anylist) a)
 		(begin
 		  (putc 40 f)
@@ -290,7 +293,7 @@
 		  unitv)
 		(begin (putstr "<UNDISPLAYABLE> of type " f) 
 			   (putstr (type_desc_name (any_type (ref a))) f)
-			   unitv))))))))
+			   unitv)))))))))
 	a)))
 	   
 
