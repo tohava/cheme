@@ -16,5 +16,12 @@
   (lambda ((any a) ((ptr anylist) b))	
 	(var ((ptr anylist) p (new anylist)))
 	(<- p (pack anylist (tupv a b)))
-	p)))
+	p))
+
+ ((func (ptr anylist) (ptr anylist) (ptr anylist)) append
+  (lambda (((ptr anylist) a)
+		   ((ptr anylist) b))
+	(if (is_null a)
+		b
+		(cons (car a) (append (cdr a) b))))))
 

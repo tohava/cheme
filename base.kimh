@@ -18,6 +18,7 @@
 
  ((ptr anylist) nil)
  ((func any (ptr anylist) (ptr anylist)) cons)
+ ((func (ptr anylist) (ptr anylist) (ptr anylist)) append)
  ((func (ptr anylist) any) car)
  ((func (ptr anylist) (ptr any)) car_addr)
  ((func (ptr anylist) (ptr anylist)) cdr)
