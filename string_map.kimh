@@ -1,6 +1,7 @@
 (type_pack unit string_map_missing)
 (type_pack (ptr anylist) string_map)
 (decl
+ (string_map_missing                          string_map_missing_value)
  ((func string_map (ptr char) (ptr any))      sm_find_addr)
  ((func string_map (ptr char) any)            sm_find)
  ((func string_map)                           sm_new)

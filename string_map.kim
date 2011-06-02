@@ -2,6 +2,8 @@
 
 (decl ((func int int) putchar))
 (type_pack unit string_map_missing)
+(var (string_map_missing string_map_missing_value
+	 					 (pack string_map_missing unitv)))
 (type_pack (ptr anylist) string_map)
 (var ((ptr any) null_ptr_any))
 (var 
@@ -32,7 +34,7 @@
  ((func string_map (ptr char) any) sm_find
   (lambda ((string_map smap) ((ptr char) name))
 	(var ((ptr any) p (sm_find_addr smap name))) 
-	(if (is_null p) (to_any (pack string_map_missing unitv)) (ind p))))
+	(if (is_null p) (to_any string_map_missing_value) (ind p))))
 
  ((func string_map) sm_new (lambda () (pack string_map nil)))
  ((func (ptr string_map) (ptr char) any unit) sm_update
