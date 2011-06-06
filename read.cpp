@@ -2099,10 +2099,11 @@ int try_lambda_term(Term &term) {
 		cheme_printf_push_body();
 		cheme_printf_set_zone(PRINTF_ZONE_CURRENT_BODY);
 			   
-		it = term.list.begin(); ++it; ++it;
+		it = term.list.begin(); ++it;
 		cheme_printf_push();
 		ASSERT(it->type == TERM_TYPE_LIST, "second term of lambda should be "
 		      "param list");
+		++it;
 		const int final_value_index = foldl(handle_term_for_fold, 0, it,
 		                                    term.list.end());
 		cheme_printf("return %s;\n", make_temp_name(final_value_index).c_str());
